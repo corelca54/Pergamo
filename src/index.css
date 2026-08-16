@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+/* Declaración de la paleta institucional verde/forestal para Tailwind v4 */
+@theme {
+  --color-primary-50: #f0fdf4;
+  --color-primary-100: #dcfce7;
+  --color-primary-200: #bbf7d0;
+  --color-primary-300: #86efac;
+  --color-primary-400: #4ade80;
+  --color-primary-500: #22c55e;
+  --color-primary-600: #16a34a;
+  --color-primary-700: #15803d;
+  --color-primary-800: #166534;
+  --color-primary-900: #14532d;
+  --color-primary-950: #052e16;
+
+  --color-danger: #dc2626;
+}
+
+@layer utilities {
+  .bg-documental-pattern {
+    background-color: #FAFAF9;
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(36, 130, 76, 0.08) 0px, transparent 50%),
+      radial-gradient(at 100% 100%, rgba(14, 116, 144, 0.06) 0px, transparent 50%),
+      radial-gradient(rgba(28, 107, 62, 0.12) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 24px 24px;
+  }
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
