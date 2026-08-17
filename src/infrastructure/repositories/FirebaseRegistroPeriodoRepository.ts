@@ -84,9 +84,25 @@ export class FirebaseRegistroPeriodoRepository implements IRegistroPeriodoReposi
     return { items, nextCursor };
   }
 
+  /** Firestore RECHAZA cualquier campo con valor `undefined` (el error que viste: "Unsupported
+   *  field value: undefined"). En JS/TS es comun terminar con undefined en campos opcionales que
+   *  el usuario no lleno (encargado, fechaVisita, observaciones) -- esta funcion los quita antes
+   *  de escribir, recursivamente, para que nunca vuelva a pasar sin importar que campo se agregue
+   *  despues. */
+  private limpiar<T extends Record<string, any>>(obj: T): T {
+    const limpio: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined) continue;
+      limpio[k] = v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date)
+        ? this.limpiar(v)
+        : v;
+    }
+    return limpio as T;
+  }
+
   async guardar(registro: Omit<RegistroPeriodo, "id" | "creadoEn" | "actualizadoEn">): Promise<RegistroPeriodo> {
     const ref = await addDoc(collection(db, REGISTROS), {
-      ...registro,
+      ...this.limpiar(registro),
       creadoEn: serverTimestamp(),
       actualizadoEn: serverTimestamp(),
     });
@@ -96,7 +112,7 @@ export class FirebaseRegistroPeriodoRepository implements IRegistroPeriodoReposi
   }
 
   async actualizar(id: string, cambios: Partial<RegistroPeriodo>): Promise<void> {
-    await updateDoc(doc(db, REGISTROS, id), { ...cambios, actualizadoEn: serverTimestamp() });
+    await updateDoc(doc(db, REGISTROS, id), { ...this.limpiar(cambios), actualizadoEn: serverTimestamp() });
   }
 
   suscribirseAResumen(

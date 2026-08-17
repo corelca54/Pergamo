@@ -1,0 +1,35 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Patron original alusivo a gestion documental: cajas de archivo, carpetas y folios,
+       estilo de linea, disenado para este proyecto (no es una imagen de stock). -->
+  <g fill="none" stroke="#166534" stroke-width="1.4" stroke-opacity="0.10">
+    <!-- Caja de archivo (esquina superior izquierda) -->
+    <rect x="14" y="18" width="46" height="32" rx="2"/>
+    <rect x="14" y="18" width="46" height="9" rx="2"/>
+    <line x1="30" y1="18" x2="30" y2="9"/>
+    <line x1="44" y1="18" x2="44" y2="9"/>
+    <line x1="30" y1="9" x2="44" y2="9"/>
+
+    <!-- Carpeta con pestana -->
+    <path d="M110 24 h34 v28 h-34 z"/>
+    <path d="M110 24 l6 -6 h14 l4 6"/>
+
+    <!-- Folios apilados -->
+    <rect x="150" y="110" width="30" height="38" rx="1.5"/>
+    <rect x="146" y="106" width="30" height="38" rx="1.5"/>
+    <rect x="142" y="102" width="30" height="38" rx="1.5"/>
+    <line x1="148" y1="112" x2="166" y2="112"/>
+    <line x1="148" y1="118" x2="166" y2="118"/>
+    <line x1="148" y1="124" x2="162" y2="124"/>
+
+    <!-- Segunda caja de archivo, mas abajo -->
+    <rect x="24" y="132" width="42" height="30" rx="2"/>
+    <rect x="24" y="132" width="42" height="8" rx="2"/>
+    <line x1="38" y1="132" x2="38" y2="124"/>
+    <line x1="52" y1="132" x2="52" y2="124"/>
+    <line x1="38" y1="124" x2="52" y2="124"/>
+
+    <!-- Sello / estampilla circular, alude al "Semaforo" y trazabilidad -->
+    <circle cx="176" cy="60" r="12"/>
+    <circle cx="176" cy="60" r="7"/>
+  </g>
+</svg>

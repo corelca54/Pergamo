@@ -1,35 +1,175 @@
 @import "tailwindcss";
 
-/* Declaración de la paleta institucional verde/forestal para Tailwind v4 */
+/* Paleta corporativa: azul (confianza, software empresarial) + teal (orden, modernidad) sobre
+   grises fríos muy limpios. Escala completa alrededor de los anclajes exactos que se pidieron:
+   primario #2563EB, hover #1D4ED8, secundario #0F766E. */
 @theme {
-  --color-primary-50: #f0fdf4;
-  --color-primary-100: #dcfce7;
-  --color-primary-200: #bbf7d0;
-  --color-primary-300: #86efac;
-  --color-primary-400: #4ade80;
-  --color-primary-500: #22c55e;
-  --color-primary-600: #16a34a;
-  --color-primary-700: #15803d;
-  --color-primary-800: #166534;
-  --color-primary-900: #14532d;
-  --color-primary-950: #052e16;
+  --color-primary-50: #EFF6FF;
+  --color-primary-100: #DBEAFE;
+  --color-primary-200: #BFDBFE;
+  --color-primary-300: #93C5FD;
+  --color-primary-400: #60A5FA;
+  --color-primary-500: #3B82F6;
+  --color-primary-600: #2563EB;
+  --color-primary-700: #1D4ED8;
+  --color-primary-800: #1E40AF;
+  --color-primary-900: #1E3A8A;
+  --color-primary-950: #172554;
+
+  --color-accent-50: #F0FDFA;
+  --color-accent-100: #CCFBF1;
+  --color-accent-200: #99F6E4;
+  --color-accent-300: #5EEAD4;
+  --color-accent-400: #2DD4BF;
+  --color-accent-500: #14B8A6;
+  --color-accent-600: #0D9488;
+  --color-accent-700: #0F766E;
+  --color-accent-800: #115E59;
+  --color-accent-900: #134E4A;
+
+  --color-archivo-50: #F8FAFC;
+  --color-archivo-100: #F1F5F9;
+  --color-archivo-200: #E2E8F0;
+  --color-archivo-300: #CBD5E1;
+  --color-archivo-400: #94A3B8;
+  --color-archivo-500: #64748B;
+  --color-archivo-600: #475569;
+  --color-archivo-700: #334155;
+  --color-archivo-800: #1E293B;
+  --color-archivo-900: #0F172A;
+  --color-archivo-950: #020617;
 
   --color-danger: #dc2626;
 }
 
 @layer utilities {
+  /* Fondo degradado suave estilo Canva: pastel, luminoso, sin la textura de cuadricula ni las
+     capas de blur pesadas de antes -- mas limpio, y mas importante: SIN overflow-x:hidden (eso
+     era lo que probablemente rompia el "fixed" del sidebar en algunos navegadores, al crear un
+     contenedor de scroll propio que interfiere con el posicionamiento fijo). */
   .bg-documental-pattern {
-    background-color: #FAFAF9;
-    background-image: 
-      radial-gradient(at 0% 0%, rgba(36, 130, 76, 0.08) 0px, transparent 50%),
-      radial-gradient(at 100% 100%, rgba(14, 116, 144, 0.06) 0px, transparent 50%),
-      radial-gradient(rgba(28, 107, 62, 0.12) 1px, transparent 1px);
-    background-size: 100% 100%, 100% 100%, 24px 24px;
+    position: relative;
+    background: linear-gradient(135deg, #EFF6FF 0%, #F0FDFA 45%, #F8FAFC 100%);
+    background-attachment: fixed;
+  }
+
+  /* Capa lejana: manchas grandes y saturadas -- azul + teal, la paleta corporativa completa */
+  .bg-documental-pattern::before {
+    content: "";
+    position: fixed;
+    inset: -10%;
+    z-index: 0;
+    pointer-events: none;
+    filter: blur(60px);
+    background-image:
+      radial-gradient(38% 32% at 8% 12%, rgba(37, 99, 235, 0.20), transparent 70%),
+      radial-gradient(42% 36% at 92% 20%, rgba(15, 118, 110, 0.20), transparent 70%),
+      radial-gradient(36% 34% at 20% 92%, rgba(29, 78, 216, 0.16), transparent 70%),
+      radial-gradient(34% 30% at 88% 88%, rgba(13, 148, 136, 0.16), transparent 70%);
+    animation: manchas-flotantes 26s ease-in-out infinite alternate;
+  }
+
+  /* Capa cercana: manchas mas chicas y nitidas, se mueven distinto -- refuerza el efecto de
+     profundidad (paralaje simple con CSS, sin necesitar JS ni librerias) */
+  .bg-documental-pattern::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    filter: blur(24px);
+    background-image:
+      radial-gradient(18% 16% at 78% 12%, rgba(59, 130, 246, 0.16), transparent 75%),
+      radial-gradient(16% 14% at 15% 70%, rgba(20, 184, 166, 0.16), transparent 75%);
+    animation: manchas-flotantes-cerca 18s ease-in-out infinite alternate;
+  }
+
+  /* Ilustracion de estanteria de archivo: fila completa de 4 modulos, ancla al ancho completo
+     abajo (no solo una esquina) -- se nota mas, pero se mantiene a baja opacidad para que las
+     tarjetas de vidrio sigan siendo lo que mas resalta. */
+  .bg-documental-pattern .estanteria-ilustracion {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: min(28vw, 400px);
+    z-index: 0;
+    pointer-events: none;
+    background-image: url("/estanteria-archivo.svg");
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: bottom center;
+    opacity: 0.22;
+    mask-image: linear-gradient(to top, black 55%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to top, black 55%, transparent 100%);
+  }
+
+  .bg-documental-pattern > * {
+    position: relative;
+    z-index: 1;
   }
 }
 
+@keyframes manchas-flotantes {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(-3%, 3%) scale(1.08); }
+  100% { transform: translate(3%, -2%) scale(1); }
+}
+
+@keyframes manchas-flotantes-cerca {
+  0%   { transform: translate(0, 0); }
+  50%  { transform: translate(4%, -4%); }
+  100% { transform: translate(-3%, 3%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-documental-pattern::before,
+  .bg-documental-pattern::after { animation: none; }
+}
+
+/* Vidrio esmerilado real: fondo translucido (se ve el color de atras), blur fuerte, borde que
+   "atrapa la luz" (linea blanca tenue arriba, como el reflejo en un vidrio real) y sombra suave
+   para que flote sobre el fondo -- look premium SaaS (Stripe/Linear/Notion), no una tarjeta plana. */
 .glass-card {
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.8) inset,
+    0 8px 30px -12px rgba(37, 99, 235, 0.16);
+}
+
+/* Tarjetas interactivas: el borde "se ilumina" (coral) y la tarjeta flota un poco mas al pasar
+   el mouse -- transmite que la interfaz responde, sensacion de app sofisticada, no estatica. */
+.glass-card-interactiva {
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+}
+
+.glass-card-interactiva:hover {
+  border-color: rgba(37, 99, 235, 0.45);
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.9) inset,
+    0 0 0 1px rgba(37, 99, 235, 0.20),
+    0 14px 36px -14px rgba(37, 99, 235, 0.24);
+}
+
+/* Tailwind quita el borde/apariencia nativa de los campos de formulario por diseño (Preflight) --
+   sin esto, los inputs quedan funcionales pero INVISIBLES (sin borde, sin fondo distinguible).
+   Esta regla les devuelve una apariencia clara y consistente en toda la app, para cualquier
+   input/select/textarea, sin tener que repetir el estilo en cada pantalla. */
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563EB;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
 }

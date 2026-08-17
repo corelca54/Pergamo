@@ -15,10 +15,15 @@ export default defineConfig({
         name: 'Pérgamo - Gestión Documental',
         short_name: 'Pérgamo',
         description: 'Auditoría de TRD y CCD para unidades operativas',
-        theme_color: '#ffffff',
-        background_color: '#ffffff',
+        theme_color: '#166534',
+        background_color: '#FAFAF9',
         display: 'standalone',
-        icons: []
+        start_url: '/',
+        icons: [
+          { src: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          { src: '/pwa-maskable-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ]
       }
     })
   ],
