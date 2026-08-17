@@ -1,256 +1,256 @@
-import React, { useState } from 'react';
-import { useVisitas } from '@presentation/hooks/useVisitas';
-import { VisitaAuditoria, DetalleFondo } from '@domain/entities/VisitaAuditoria';
+import { useMemo, useState } from "react";
+import { useRegistroPeriodo } from "../hooks/useRegistroPeriodo";
+import {
+  calcularAvancePorTarea,
+  calcularAvanceTotal,
+  semaforo,
+  PERIODOS_TRD,
+} from "../../domain/entities/RegistroPeriodo";
+import type {
+  PeriodoTRD,
+  TareasCantidad,
+  Transferencia,
+  DiagnosticoRiesgo,
+  TipoAlmacenamiento,
+} from "../../domain/entities/RegistroPeriodo";
 
-export const FormularioVisita = () => {
-  const { registrarVisita, loading, error, visitas } = useVisitas();
-  
-  const [idCDC, setIdCDC] = useState('');
-  const [localidad, setLocalidad] = useState('');
+const PERIODOS = PERIODOS_TRD;
 
-  const [ubicacion, setUbicacion] = useState<'CDC' | 'Lavandería'>('CDC');
-  const [versionTRD, setVersionTRD] = useState('');
-  const [cajas, setCajas] = useState(0);
-  const [carpetas, setCarpetas] = useState(0);
+// Orden del ciclo documental, igual que en el Excel: Eliminación va justo después de FUID.
+// eliminacion es null por defecto -- "N/A" hasta que el usuario la toque, nunca 0 forzado.
+const TAREAS: Array<{ key: keyof TareasCantidad; label: string; opcional?: boolean }> = [
+  { key: "fuid", label: "FUID" },
+  { key: "eliminacion", label: "Eliminación", opcional: true },
+  { key: "clasificacion", label: "Clasificación" },
+  { key: "ordenacion", label: "Ordenación" },
+  { key: "foliacion", label: "Foliación" },
+  { key: "hojaControl", label: "Hoja de Control" },
+  { key: "rotulacion", label: "Rotulación" },
+];
 
-  const [detalles, setDetalles] = useState<DetalleFondo[]>([]);
+const VACIAS: TareasCantidad = {
+  fuid: 0, eliminacion: null, clasificacion: 0, ordenacion: 0,
+  foliacion: 0, hojaControl: 0, rotulacion: 0,
+};
 
-  const agregarDetalle = () => {
-    if (!versionTRD || cajas <= 0 || carpetas <= 0) {
-      alert('Por favor completa la versión TRD y pon valores mayores a cero.');
-      return;
+const TRANSFERENCIA_VACIA: Transferencia = {
+  correoSAF: false, aprobacionSAF: false, trasladoArchivoCentral: false, cajasTrasladadas: 0,
+};
+
+const DIAGNOSTICO_VACIO: DiagnosticoRiesgo = {
+  tipoAlmacenamiento: null,
+  riesgoHumedad: null, riesgoRoedores: null, riesgoSobreapilamiento: null, riesgoFiltraciones: null,
+  cajasSobreapiladas: 0, metrosEspacioAjenoInvadido: 0,
+};
+
+const TIPOS_ALMACENAMIENTO: TipoAlmacenamiento[] = [
+  "Estantería adecuada", "Piso", "Piso y Estantería", "Lugar no apropiado",
+];
+
+const COLOR_SEMAFORO = {
+  verde: "#2E9E6C",
+  ambar: "#E8A33D",
+  rojo: "#D9503F",
+} as const;
+
+export function FormularioVisita() {
+  const { registrar, loading } = useRegistroPeriodo();
+  const [unidadOperativaId, setUnidad] = useState("");
+  const [periodo, setPeriodo] = useState<PeriodoTRD>(PERIODOS[0]);
+  const [totalCajas, setTotalCajas] = useState<number>(0);
+  const [tareas, setTareas] = useState<TareasCantidad>(VACIAS);
+  const [transferencia, setTransferencia] = useState<Transferencia>(TRANSFERENCIA_VACIA);
+  const [diagnostico, setDiagnostico] = useState<DiagnosticoRiesgo>(DIAGNOSTICO_VACIO);
+  const [encargado, setEncargado] = useState("");
+  const [fechaVisita, setFechaVisita] = useState("");
+  const [observaciones, setObservaciones] = useState("");
+  const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  const avanceTotal = useMemo(() => calcularAvanceTotal({ totalCajas, tareas }), [totalCajas, tareas]);
+  const estado = semaforo(avanceTotal);
+
+  const excedidas = TAREAS.filter(
+    ({ key }) => totalCajas > 0 && typeof tareas[key] === "number" && (tareas[key] as number) > totalCajas
+  );
+
+  async function guardar() {
+    setMensaje(null);
+    try {
+      await registrar({
+        unidadOperativaId, periodo, totalCajas, tareas, transferencia, diagnostico,
+        encargado: encargado || undefined,
+        fechaVisita: fechaVisita || undefined,
+        observaciones: observaciones || undefined,
+      });
+      setMensaje({ tipo: "ok", texto: "Visita registrada. El tablero ya refleja el cambio." });
+      setTareas(VACIAS);
+      setTotalCajas(0);
+      setTransferencia(TRANSFERENCIA_VACIA);
+      setDiagnostico(DIAGNOSTICO_VACIO);
+      setObservaciones("");
+      setFechaVisita("");
+    } catch (e) {
+      setMensaje({ tipo: "error", texto: e instanceof Error ? e.message : "No se pudo guardar." });
     }
-    
-    const nuevoDetalle: DetalleFondo = { ubicacion, versionTRD, cajas, carpetas };
-    setDetalles([...detalles, nuevoDetalle]);
-    
-    setVersionTRD('');
-    setCajas(0);
-    setCarpetas(0);
-  };
+  }
 
-  const eliminarDetalle = (index: number) => {
-    setDetalles(detalles.filter((_, i) => i !== index));
-  };
-
-  const granTotalCajas = detalles.reduce((acc, det) => acc + det.cajas, 0);
-  const granTotalCarpetas = detalles.reduce((acc, det) => acc + det.carpetas, 0);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (detalles.length === 0) {
-      alert('Debes agregar al menos un registro de cajas antes de guardar.');
-      return;
-    }
-
-    const nuevaVisita: Omit<VisitaAuditoria, 'idVisita'> = {
-      fecha: new Date(),
-      idCDC,
-      localidad,
-      tipoVisita: 'Diagnóstico',
-      tema: 'Revisión de Tablas de Retención Documental',
-      metricas: {
-        detallesFondo: detalles,
-        granTotalCajas,
-        granTotalCarpetas,
-        procesosEliminacion: 0,
-        transferencias: 0,
-        procesosFDA: 0,
-        porcentajeCumplimiento: 100
-      },
-      desarrolloCualitativo: 'Registro inicial desde PWA',
-      compromisos: [],
-      asistentes: [],
-      estado: 'Borrador'
-    };
-
-    await registrarVisita(nuevaVisita);
-    
-    setIdCDC('');
-    setLocalidad('');
-    setDetalles([]);
-  };
+  const puedeGuardar = unidadOperativaId.trim() !== "" && totalCajas > 0 && excedidas.length === 0 && !loading;
 
   return (
-    <div className="space-y-6">
-      <div className="glass-card rounded-2xl shadow-xl border border-stone-200/80 overflow-hidden transition-all">
-        
-        {/* Encabezado con degradado verde forestal */}
-        <div className="bg-gradient-to-r from-primary-900 via-primary-800 to-primary-700 px-6 py-5 text-white">
-          <h2 className="text-xl font-bold tracking-tight flex items-center gap-2">
-            📄 Registrar Nueva Visita de Auditoría
-          </h2>
-          <p className="text-primary-100/80 text-xs mt-1">Levantamiento de inventario documental en centro operativo</p>
+    <div style={{ maxWidth: 720, margin: "0 auto", padding: 24 }}>
+      <header>
+        <p style={{ color: "#0F9D8C", fontWeight: 700, fontSize: 12, textTransform: "uppercase" }}>Registro de visita</p>
+        <h1 style={{ fontSize: 24, fontWeight: 600 }}>Capturar avance por periodo</h1>
+        <p style={{ fontSize: 14, color: "#666" }}>Digita solo cantidades de cajas. Los porcentajes se calculan solos.</p>
+      </header>
+
+      <section style={{ marginTop: 16 }}>
+        <label style={{ display: "block", marginBottom: 8 }}>
+          <span>Unidad operativa</span>
+          <input value={unidadOperativaId} onChange={(e) => setUnidad(e.target.value)}
+                 placeholder="Ej. CDC Lago Timiza" style={{ display: "block", width: "100%" }} />
+        </label>
+        <label style={{ display: "block", marginBottom: 8 }}>
+          <span>Periodo / fase TRD</span>
+          <select value={periodo} onChange={(e) => setPeriodo(e.target.value as PeriodoTRD)} style={{ display: "block", width: "100%" }}>
+            {PERIODOS.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </label>
+        <label style={{ display: "block", marginBottom: 8, maxWidth: 220 }}>
+          <span>Total cajas (meta)</span>
+          <input type="number" min={0} value={totalCajas || ""} onChange={(e) => setTotalCajas(Number(e.target.value) || 0)}
+                 style={{ display: "block", width: "100%" }} />
+        </label>
+        <label style={{ display: "block", marginBottom: 8, maxWidth: 220 }}>
+          <span>Fecha de la visita</span>
+          <input type="date" value={fechaVisita} onChange={(e) => setFechaVisita(e.target.value)} style={{ display: "block", width: "100%" }} />
+          <span style={{ fontSize: 11, color: "#999" }}>En blanco = Pendiente. Futura = Programada. Hoy o antes = Realizada.</span>
+        </label>
+      </section>
+
+      <section style={{ marginTop: 16 }}>
+        <p style={{ fontWeight: 600 }}>Cajas completadas por tarea</p>
+        {TAREAS.map(({ key, label, opcional }) => {
+          const valor = tareas[key];
+          const esNA = opcional && (valor === null || valor === undefined);
+          const pct = calcularAvancePorTarea(valor, totalCajas);
+          const excede = totalCajas > 0 && typeof valor === "number" && valor > totalCajas;
+          return (
+            <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 8, alignItems: "center", marginBottom: 6 }}>
+              <span>{label}</span>
+              {opcional ? (
+                <label style={{ fontSize: 11 }}>
+                  <input type="checkbox" checked={!!esNA} onChange={(e) => setTareas({ ...tareas, [key]: e.target.checked ? null : 0 })} /> N/A
+                </label>
+              ) : <span />}
+              <input type="number" min={0} disabled={!!esNA}
+                     style={{ width: 90, borderColor: excede ? "#D9503F" : undefined }}
+                     value={esNA ? "" : (valor ?? 0) || ""}
+                     onChange={(e) => setTareas({ ...tareas, [key]: Number(e.target.value) || 0 })} />
+              <span style={{ width: 48, textAlign: "right" }}>{pct === null ? "N/A" : `${Math.round(pct * 100)}%`}</span>
+            </div>
+          );
+        })}
+        {excedidas.length > 0 && (
+          <p style={{ color: "#D9503F", fontSize: 13 }}>
+            {excedidas.map((t) => t.label).join(", ")} supera{excedidas.length > 1 ? "n" : ""} el Total Cajas. Revisa el dato.
+          </p>
+        )}
+      </section>
+
+      <section style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 12, height: 12, borderRadius: "50%", background: COLOR_SEMAFORO[estado] }} />
+        <div>
+          <p style={{ fontSize: 12, color: "#666" }}>Avance total del periodo</p>
+          <p style={{ fontSize: 22, fontWeight: 700 }}>{Math.round(avanceTotal * 100)}%</p>
         </div>
+      </section>
 
-        <div className="p-6 md:p-8 space-y-6">
-          {error && (
-            <div className="p-4 bg-red-50 border-l-4 border-danger text-danger text-sm rounded-r-lg font-medium">
-              ⚠️ {error}
-            </div>
-          )}
-          
-          <form onSubmit={handleSubmit} className="space-y-6">
-            
-            {/* 1. Información del Centro */}
-            <div className="bg-white/70 p-5 rounded-xl border border-stone-200/80 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-primary-900 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-primary-600"></span> 
-                1. Datos del Centro
-              </h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">ID del Centro (CDC)</label>
-                  <input 
-                    type="text" 
-                    value={idCDC} 
-                    onChange={(e) => setIdCDC(e.target.value)} 
-                    required 
-                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all bg-white text-sm"
-                    placeholder="Ej. CDC Porvenir"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">Localidad</label>
-                  <input 
-                    type="text" 
-                    value={localidad} 
-                    onChange={(e) => setLocalidad(e.target.value)} 
-                    required 
-                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all bg-white text-sm"
-                    placeholder="Ej. Bosa"
-                  />
-                </div>
-              </div>
-            </div>
+      <section style={{ marginTop: 16 }}>
+        <p style={{ fontWeight: 600 }}>Transferencia al archivo central</p>
+        <p style={{ fontSize: 12, color: "#999" }}>
+          Se activa solo cuando el periodo llegó al 100% y ya se trasladó. El histórico nunca cambia.
+        </p>
+        {([
+          ["correoSAF", "Correo SAF"],
+          ["aprobacionSAF", "Aprobación SAF"],
+          ["trasladoArchivoCentral", "Traslado Archivo Central"],
+        ] as const).map(([key, label]) => (
+          <label key={key} style={{ marginRight: 16, fontSize: 13 }}>
+            <input type="checkbox" checked={transferencia[key]}
+                   onChange={(e) => setTransferencia({ ...transferencia, [key]: e.target.checked })} /> {label}
+          </label>
+        ))}
+        {transferencia.trasladoArchivoCentral && (
+          <label style={{ display: "block", marginTop: 8, maxWidth: 220 }}>
+            <span>Cajas trasladadas</span>
+            <input type="number" min={0} max={totalCajas} value={transferencia.cajasTrasladadas || ""}
+                   onChange={(e) => setTransferencia({ ...transferencia, cajasTrasladadas: Number(e.target.value) || 0 })}
+                   style={{ display: "block", width: "100%" }} />
+          </label>
+        )}
+      </section>
 
-            {/* 2. Captura Dinámica de Cajas y TRD */}
-            <div className="bg-primary-50/50 p-5 rounded-xl border border-primary-200/80 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-primary-950 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-primary-600"></span> 
-                2. Captura de Cajas y Carpetas por TRD
-              </h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">Ubicación Física</label>
-                  <select 
-                    value={ubicacion} 
-                    onChange={(e) => setUbicacion(e.target.value as 'CDC' | 'Lavandería')}
-                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none bg-white text-sm"
-                  >
-                    <option value="CDC">Área Administrativa (CDC)</option>
-                    <option value="Lavandería">Lavandería Comunitaria</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">Versión TRD</label>
-                  <input 
-                    type="text" 
-                    value={versionTRD} 
-                    onChange={(e) => setVersionTRD(e.target.value)}
-                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none bg-white text-sm"
-                    placeholder="Ej. TRD Versión 1"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">Cantidad de Cajas</label>
-                  <input 
-                    type="number" 
-                    value={cajas} 
-                    onChange={(e) => setCajas(Number(e.target.value))} 
-                    min="0"
-                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none bg-white text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">Cantidad de Carpetas</label>
-                  <input 
-                    type="number" 
-                    value={carpetas} 
-                    onChange={(e) => setCarpetas(Number(e.target.value))} 
-                    min="0"
-                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none bg-white text-sm"
-                  />
-                </div>
-              </div>
-
-              <button 
-                type="button" 
-                onClick={agregarDetalle}
-                className="w-full bg-primary-600 hover:bg-primary-700 text-white font-semibold py-2.5 px-4 rounded-lg transition-all shadow-sm hover:shadow active:scale-[0.99] flex justify-center items-center gap-2 text-sm"
-              >
-                <span>+</span> Añadir Lote al Listado
-              </button>
-            </div>
-
-            {/* 3. Lotes Registrados en la Sesión */}
-            {detalles.length > 0 && (
-              <div className="space-y-3">
-                <h4 className="text-xs font-bold text-stone-500 uppercase tracking-wider">Lotes vinculados a la visita</h4>
-                <div className="space-y-2">
-                  {detalles.map((det, index) => (
-                    <div key={index} className="flex justify-between items-center bg-white border border-stone-200 p-3.5 rounded-xl shadow-xs hover:border-primary-300 transition-colors">
-                      <div className="text-xs">
-                        <span className="font-bold text-stone-900">{det.ubicacion}</span> 
-                        <span className="text-stone-500 ml-2">| {det.versionTRD}</span>
-                        <div className="text-stone-600 mt-0.5">📦 {det.cajas} cajas / 📁 {det.carpetas} carpetas</div>
-                      </div>
-                      <button 
-                        type="button" 
-                        onClick={() => eliminarDetalle(index)}
-                        className="text-red-600 hover:text-red-800 hover:bg-red-50 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors"
-                      >
-                        Eliminar
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                
-                <div className="flex justify-between items-center bg-primary-100/60 p-3.5 rounded-xl border border-primary-200 text-xs">
-                  <span className="font-semibold text-primary-950">Gran Total Consolidado:</span>
-                  <span className="font-bold text-primary-800 text-sm">{granTotalCajas} cajas • {granTotalCarpetas} carpetas</span>
-                </div>
-              </div>
-            )}
-
-            <button 
-              type="submit" 
-              disabled={loading}
-              className={`w-full font-bold py-3.5 px-4 rounded-xl transition-all shadow-md active:scale-[0.99] ${
-                loading ? 'bg-stone-400 cursor-not-allowed' : 'bg-gradient-to-r from-primary-700 to-primary-600 hover:from-primary-800 hover:to-primary-700 text-white shadow-primary-900/10'
-              }`}
-            >
-              {loading ? 'Guardando Registro...' : 'Guardar Visita Completa'}
-            </button>
-          </form>
-        </div>
-      </div>
-
-      {/* Historial en Memoria */}
-      {visitas.length > 0 && (
-        <div className="space-y-3 pt-4">
-          <h3 className="text-md font-bold text-stone-900">Historial Registrado en Sesión</h3>
-          <div className="space-y-3">
-            {visitas.map((v, index) => (
-              <div key={index} className="glass-card p-4 rounded-xl border border-stone-200 shadow-xs flex justify-between items-center">
-                <div>
-                  <h4 className="font-bold text-sm text-stone-900">{v.idVisita} - {v.localidad}</h4>
-                  <p className="text-xs text-stone-500">CDC: {v.idCDC} • {v.metricas.granTotalCajas} Cajas / {v.metricas.granTotalCarpetas} Carpetas</p>
-                </div>
-                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200">
-                  {v.estado}
-                </span>
-              </div>
-            ))}
+      <section style={{ marginTop: 16 }}>
+        <p style={{ fontWeight: 600 }}>Diagnóstico de conservación (esta visita)</p>
+        <label style={{ display: "block", maxWidth: 260 }}>
+          <span>Tipo de almacenamiento</span>
+          <select value={diagnostico.tipoAlmacenamiento ?? ""}
+                  onChange={(e) => setDiagnostico({ ...diagnostico, tipoAlmacenamiento: (e.target.value || null) as TipoAlmacenamiento | null })}
+                  style={{ display: "block", width: "100%" }}>
+            <option value="">Sin diagnosticar</option>
+            {TIPOS_ALMACENAMIENTO.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+        {([
+          ["riesgoHumedad", "Humedad"],
+          ["riesgoRoedores", "Roedores"],
+          ["riesgoSobreapilamiento", "Sobreapilamiento"],
+          ["riesgoFiltraciones", "Filtraciones / lluvias"],
+        ] as const).map(([key, label]) => (
+          <label key={key} style={{ marginRight: 16, fontSize: 13 }}>
+            <input type="checkbox" checked={diagnostico[key] === true}
+                   onChange={(e) => setDiagnostico({ ...diagnostico, [key]: e.target.checked })} /> {label}
+          </label>
+        ))}
+        {diagnostico.riesgoSobreapilamiento && (
+          <div style={{ marginTop: 8 }}>
+            <label style={{ display: "block", maxWidth: 260 }}>
+              <span>Cajas sobreapiladas (fuera de estantería)</span>
+              <input type="number" min={0} value={diagnostico.cajasSobreapiladas || ""}
+                     onChange={(e) => setDiagnostico({ ...diagnostico, cajasSobreapiladas: Number(e.target.value) || 0 })}
+                     style={{ display: "block", width: "100%" }} />
+            </label>
+            <label style={{ display: "block", maxWidth: 260, marginTop: 8 }}>
+              <span>Metros de espacio ajeno invadido</span>
+              <input type="number" min={0} step={0.1} value={diagnostico.metrosEspacioAjenoInvadido || ""}
+                     onChange={(e) => setDiagnostico({ ...diagnostico, metrosEspacioAjenoInvadido: Number(e.target.value) || 0 })}
+                     style={{ display: "block", width: "100%" }} />
+              <span style={{ fontSize: 11, color: "#999" }}>
+                Pasillo, oficina u otro espacio que no es de archivo. 0 si el exceso está en el mismo rincón.
+              </span>
+            </label>
           </div>
-        </div>
+        )}
+      </section>
+
+      <label style={{ display: "block", marginTop: 16 }}>
+        <span>Encargado</span>
+        <input value={encargado} onChange={(e) => setEncargado(e.target.value)} style={{ display: "block", width: "100%" }} />
+      </label>
+      <label style={{ display: "block", marginTop: 8 }}>
+        <span>Observaciones</span>
+        <textarea rows={2} value={observaciones} onChange={(e) => setObservaciones(e.target.value)}
+                   style={{ display: "block", width: "100%" }} />
+      </label>
+
+      {mensaje && (
+        <p style={{ marginTop: 16, color: mensaje.tipo === "ok" ? "#0F9D8C" : "#D9503F" }}>{mensaje.texto}</p>
       )}
+
+      <button onClick={guardar} disabled={!puedeGuardar} style={{ marginTop: 16, padding: "12px 24px" }}>
+        {loading ? "Guardando…" : "Registrar visita"}
+      </button>
     </div>
   );
-};
+}
