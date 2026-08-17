@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { FormularioVisita } from '@presentation/screens/FormularioVisita';
 import { PQRSPage } from '@presentation/screens/PQRSPage';
 import { AyudaDeMemoriaPage } from '@presentation/screens/AyudaDeMemoriaPage';
+import { DirectorioPage } from '@presentation/screens/DirectorioPage';
 import { TableroPage } from '@presentation/screens/TableroPage';
 import { Navbar } from '@presentation/components/Navbar';
 import type { Vista } from '@presentation/components/Navbar';
@@ -21,6 +22,7 @@ function App() {
         {vista === "captura" && <FormularioVisita />}
         {vista === "pqrs" && <PQRSPage />}
         {vista === "ayuda-memoria" && <AyudaDeMemoriaPage />}
+        {vista === "directorio" && <DirectorioPage />}
         {vista === "tablero" && <TableroPage />}
       </main>
     </div>

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Script CONSOLIDADO v9 de Pergamo -- agrega las pantallas reales de captura para PQRS y Ayuda
-de Memoria (formato GD-040, PDF descargable), y las conecta al menu (submenus reales dentro de
-"Captura": Nueva visita / PQRS / Ayuda de memoria). Incluye TODO el estado actual del proyecto.
+"""Script CONSOLIDADO v11 de Pergamo -- Directorio real: catalogo de SLIS/CDC/Lavanderias/CIAM
+importable desde CSV (exportado de la hoja "Directorio" del Excel), con selectores en cascada
+Subdireccion -> Servicio -> Unidad en Captura y PQRS (reemplaza el texto libre de antes).
+Incluye TODO el estado actual del proyecto.
 NO toca src/infrastructure/config/firebase.ts (tus credenciales) ni los iconos PNG.
-Correlo desde la raiz de tu proyecto: python actualizar_pergamo_FINAL9.py
+Correlo desde la raiz de tu proyecto: python actualizar_pergamo_FINAL11.py
 """
 import os
 ARCHIVOS_TEXTO = {
@@ -197,6 +198,95 @@ export class RegistroPeriodoBuilder {
     return { ...this.borrador };
   }
 }
+""",
+    "src/application/services/CalcularResumenDashboard.ts": """// Calcula el resumen del Tablero del lado del cliente -- reutiliza EXACTAMENTE las mismas
+// funciones de dominio que ya validamos (calcularAvanceTotal, semaforo, cajasVigentes,
+// avanceOrganizacionPQRS) en vez de reinventar la formula aqui. Si algun dia se agrega una
+// Cloud Function para pre-calcular esto en el servidor, la logica de negocio no cambia -- solo
+// cambia QUIEN la ejecuta.
+import type { RegistroPeriodo } from "../../domain/entities/RegistroPeriodo";
+import { calcularAvanceTotal, cajasVigentes, semaforo, nivelRiesgo } from "../../domain/entities/RegistroPeriodo";
+import type { PQRS } from "../../domain/entities/PQRS";
+import { avanceOrganizacionPQRS, cajasVigentesPQRS } from "../../domain/entities/PQRS";
+import type { ResumenDashboard } from "../../domain/repositories/IRegistroPeriodoRepository";
+
+const TAREAS_ORDEN: Array<{ key: keyof RegistroPeriodo["tareas"]; label: string }> = [
+  { key: "fuid", label: "FUID" },
+  { key: "eliminacion", label: "Eliminación" },
+  { key: "clasificacion", label: "Clasificación" },
+  { key: "ordenacion", label: "Ordenación" },
+  { key: "foliacion", label: "Foliación" },
+  { key: "hojaControl", label: "Hoja de Control" },
+  { key: "rotulacion", label: "Rotulación" },
+];
+
+export function calcularResumenDashboard(registros: RegistroPeriodo[], pqrs: PQRS[]): ResumenDashboard {
+  const cajasVigentesEnSitio = registros.reduce((acc, r) => acc + cajasVigentes(r), 0);
+  const totalCajasHistorico = registros.reduce((acc, r) => acc + r.totalCajas, 0);
+  const avances = registros.map((r) => calcularAvanceTotal(r));
+  const avancePromedioGlobal = avances.length ? avances.reduce((a, b) => a + b, 0) / avances.length : 0;
+  const unidadesOperativas = new Set(registros.map((r) => r.unidadOperativaId)).size;
+
+  const cajasEliminacionHistorico = registros.reduce((acc, r) => acc + (r.tareas.eliminacion ?? 0), 0);
+  const hoy = new Date(); const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString();
+  const cajasEliminacionEstePeriodo = registros
+    .filter((r) => r.actualizadoEn >= inicioMes)
+    .reduce((acc, r) => acc + (r.tareas.eliminacion ?? 0), 0);
+
+  const unidadesEnRiesgoAlto = new Set(
+    registros.filter((r) => nivelRiesgo(r.diagnostico) === "rojo").map((r) => r.unidadOperativaId)
+  ).size;
+
+  const cajasSobreapiladas = registros.reduce((acc, r) => acc + (r.diagnostico.cajasSobreapiladas || 0), 0)
+    + pqrs.reduce((acc, p) => acc + 0, 0); // PQRS no tiene diagnostico de riesgo propio, solo RegistroPeriodo
+  const metrosEspacioAjenoInvadido = registros.reduce((acc, r) => acc + (r.diagnostico.metrosEspacioAjenoInvadido || 0), 0);
+
+  // Por Dependencia/Servicio -- agrupado sobre el id de unidad (no tenemos Directorio con
+  // Dependencia/Servicio real todavia; se usa el identificador de la unidad como agrupador
+  // temporal hasta que se construya esa vinculacion, ver nota en README).
+  const grupos = new Map<string, RegistroPeriodo[]>();
+  for (const r of registros) {
+    const clave = r.unidadOperativaId;
+    grupos.set(clave, [...(grupos.get(clave) ?? []), r]);
+  }
+  const porDependenciaServicio = Array.from(grupos.entries()).map(([unidad, regs]) => ({
+    dependencia: unidad, servicio: "",
+    totalCajas: regs.reduce((acc, r) => acc + cajasVigentes(r), 0),
+    avancePromedio: regs.reduce((acc, r) => acc + calcularAvanceTotal(r), 0) / regs.length,
+  }));
+
+  const porTarea = TAREAS_ORDEN.map(({ key, label }) => {
+    const valores = registros
+      .map((r) => {
+        const cant = r.tareas[key];
+        if (cant === null || cant === undefined) return null;
+        return r.totalCajas > 0 ? cant / r.totalCajas : 0;
+      })
+      .filter((v): v is number => v !== null);
+    return { tarea: label, avancePromedio: valores.length ? valores.reduce((a, b) => a + b, 0) / valores.length : 0 };
+  });
+
+  const periodos = new Map<string, RegistroPeriodo[]>();
+  for (const r of registros) periodos.set(r.periodo, [...(periodos.get(r.periodo) ?? []), r]);
+  const porPeriodo = Array.from(periodos.entries()).map(([periodo, regs]) => ({
+    periodo,
+    totalCajas: regs.reduce((acc, r) => acc + cajasVigentes(r), 0),
+    avancePromedio: regs.reduce((acc, r) => acc + calcularAvanceTotal(r), 0) / regs.length,
+  }));
+
+  return {
+    cajasVigentesEnSitio, totalCajasHistorico, avancePromedioGlobal, unidadesOperativas,
+    cajasEliminacionHistorico, cajasEliminacionEstePeriodo, unidadesEnRiesgoAlto,
+    cajasSobreapiladas, metrosEspacioAjenoInvadido,
+    porDependenciaServicio, porTarea, porPeriodo,
+    // Sobreapilamiento por Subdireccion: pendiente de un Directorio real que vincule
+    // unidadOperativaId -> subdireccionLocal (ver README, "Proximo paso").
+    sobreapilamientoPorSubdireccion: [],
+    actualizadoEn: new Date().toISOString(),
+  };
+}
+
+export { semaforo };
 """,
     "src/application/useCases/RegistrarAvancePeriodo.ts": """import type { IRegistroPeriodoRepository } from "../../domain/repositories/IRegistroPeriodoRepository";
 import type {
@@ -646,6 +736,7 @@ export interface ICompromisoRepository {
 
 export interface IPQRSRepository {
   listarPorUnidad(unidadOperativaId: string): Promise<PQRS[]>;
+  listarTodos(): Promise<PQRS[]>;
   guardar(p: Omit<PQRS, "id" | "creadoEn" | "actualizadoEn">): Promise<PQRS>;
   actualizar(id: string, cambios: Partial<PQRS>): Promise<void>;
 }
@@ -657,6 +748,12 @@ export interface IPQRSRepository {
 // Azure SQL o cualquier otra cosa, sin tocar una sola linea de application/ ni presentation/.
 export interface IRegistroPeriodoRepository {
   listarPorUnidad(unidadOperativaId: string): Promise<RegistroPeriodo[]>;
+  /** Trae TODOS los registros -- se usa para calcular el resumen del lado del cliente (ver
+   *  CalcularResumenDashboard). En el plan gratuito de Firestore no hay Cloud Functions para
+   *  mantener un documento agregado, asi que el calculo se hace en el navegador, igual que
+   *  hace Excel al recalcular. Para el volumen de datos de este proyecto (cientos de filas,
+   *  no millones) esto es rapido y no cuesta nada extra. */
+  listarTodos(): Promise<RegistroPeriodo[]>;
   listarPagina(params: {
     dependencia?: string;
     subdireccionLocal?: string;
@@ -700,6 +797,21 @@ export interface ResumenDashboard {
     metrosEspacioAjenoInvadido: number;
   }>;
   actualizadoEn: string;
+}
+""",
+    "src/domain/repositories/IUnidadOperativaRepository.ts": """import type { UnidadOperativa } from "../entities/UnidadOperativa";
+
+// El Directorio real (Dependencia -> Servicio -> Subdireccion -> Unidad), espejo exacto del
+// Directorio del Excel. Vive en Firestore como un catalogo -- no cambia con cada visita, solo
+// cuando se agrega/edita una unidad operativa.
+export interface IUnidadOperativaRepository {
+  listarTodas(): Promise<UnidadOperativa[]>;
+  listarPorSubdireccion(subdireccionLocal: string): Promise<UnidadOperativa[]>;
+  obtenerPorId(id: string): Promise<UnidadOperativa | null>;
+  guardar(u: Omit<UnidadOperativa, "id">): Promise<UnidadOperativa>;
+  actualizar(id: string, cambios: Partial<UnidadOperativa>): Promise<void>;
+  /** Carga masiva -- para importar el Directorio real del Excel de una sola vez. */
+  importarLote(unidades: Array<Omit<UnidadOperativa, "id">>): Promise<number>;
 }
 """,
     "src/domain/services/IExportadorReportes.ts": """// Mismo patron que los repositorios: el dominio solo conoce este CONTRATO. La implementacion
@@ -936,6 +1048,11 @@ export class FirebasePQRSRepository implements IPQRSRepository {
     return snap.docs.map((d) => fromFirestore(d.id, d.data()));
   }
 
+  async listarTodos(): Promise<PQRS[]> {
+    const snap = await getDocs(collection(db, PQRS_COLECCION));
+    return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  }
+
   async guardar(p: Omit<PQRS, "id" | "creadoEn" | "actualizadoEn">): Promise<PQRS> {
     const ref = await addDoc(collection(db, PQRS_COLECCION), {
       ...limpiar(p),
@@ -1013,6 +1130,11 @@ export class FirebaseRegistroPeriodoRepository implements IRegistroPeriodoReposi
     return snap.docs.map((d) => fromFirestore(d.id, d.data()));
   }
 
+  async listarTodos(): Promise<RegistroPeriodo[]> {
+    const snap = await getDocs(collection(db, REGISTROS));
+    return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  }
+
   async listarPagina({
     dependencia,
     subdireccionLocal,
@@ -1080,6 +1202,69 @@ export class FirebaseRegistroPeriodoRepository implements IRegistroPeriodoReposi
   }
 }
 """,
+    "src/infrastructure/repositories/FirebaseUnidadOperativaRepository.ts": """import { collection, doc, addDoc, updateDoc, getDoc, getDocs, query, where, writeBatch } from "firebase/firestore";
+import { db } from "../config/firebase";
+import type { UnidadOperativa } from "../../domain/entities/UnidadOperativa";
+import type { IUnidadOperativaRepository } from "../../domain/repositories/IUnidadOperativaRepository";
+
+const COLECCION = "unidadesOperativas";
+
+function fromFirestore(id: string, data: any): UnidadOperativa {
+  return {
+    id,
+    dependencia: data.dependencia,
+    servicio: data.servicio,
+    subdireccionLocal: data.subdireccionLocal,
+    nombre: data.nombre,
+    encargado: data.encargado ?? "",
+    capacidad: data.capacidad ?? { metrosMedidos: null, largoEspacioM: null, anchoEspacioM: null },
+  };
+}
+
+export class FirebaseUnidadOperativaRepository implements IUnidadOperativaRepository {
+  async listarTodas(): Promise<UnidadOperativa[]> {
+    const snap = await getDocs(collection(db, COLECCION));
+    return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  }
+
+  async listarPorSubdireccion(subdireccionLocal: string): Promise<UnidadOperativa[]> {
+    const q = query(collection(db, COLECCION), where("subdireccionLocal", "==", subdireccionLocal));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  }
+
+  async obtenerPorId(id: string): Promise<UnidadOperativa | null> {
+    const snap = await getDoc(doc(db, COLECCION, id));
+    return snap.exists() ? fromFirestore(snap.id, snap.data()) : null;
+  }
+
+  async guardar(u: Omit<UnidadOperativa, "id">): Promise<UnidadOperativa> {
+    const ref = await addDoc(collection(db, COLECCION), u);
+    return { ...u, id: ref.id };
+  }
+
+  async actualizar(id: string, cambios: Partial<UnidadOperativa>): Promise<void> {
+    await updateDoc(doc(db, COLECCION, id), cambios);
+  }
+
+  /** Escribe en lotes de 500 (limite de Firestore por batch) -- para importar el Directorio
+   *  completo del Excel de una sola vez sin agotar la cuota con cientos de escrituras sueltas. */
+  async importarLote(unidades: Array<Omit<UnidadOperativa, "id">>): Promise<number> {
+    let escritas = 0;
+    for (let i = 0; i < unidades.length; i += 500) {
+      const lote = unidades.slice(i, i + 500);
+      const batch = writeBatch(db);
+      for (const u of lote) {
+        const ref = doc(collection(db, COLECCION));
+        batch.set(ref, u);
+      }
+      await batch.commit();
+      escritas += lote.length;
+    }
+    return escritas;
+  }
+}
+""",
     "src/infrastructure/repositories/MockRegistroPeriodoRepository.ts": """// Implementacion en memoria -- util para desarrollar la UI sin gastar cuota de Firestore,
 // y para pruebas. Implementa el MISMO contrato que la version real.
 import type { RegistroPeriodo } from "../../domain/entities/RegistroPeriodo";
@@ -1094,6 +1279,10 @@ export class MockRegistroPeriodoRepository implements IRegistroPeriodoRepository
 
   async listarPorUnidad(unidadOperativaId: string): Promise<RegistroPeriodo[]> {
     return this.registros.filter((r) => r.unidadOperativaId === unidadOperativaId);
+  }
+
+  async listarTodos(): Promise<RegistroPeriodo[]> {
+    return [...this.registros];
   }
 
   async listarPagina(params: Parameters<IRegistroPeriodoRepository["listarPagina"]>[0]) {
@@ -1284,6 +1473,7 @@ import ReactDOM from 'react-dom/client';
 import { FormularioVisita } from '@presentation/screens/FormularioVisita';
 import { PQRSPage } from '@presentation/screens/PQRSPage';
 import { AyudaDeMemoriaPage } from '@presentation/screens/AyudaDeMemoriaPage';
+import { DirectorioPage } from '@presentation/screens/DirectorioPage';
 import { TableroPage } from '@presentation/screens/TableroPage';
 import { Navbar } from '@presentation/components/Navbar';
 import type { Vista } from '@presentation/components/Navbar';
@@ -1302,6 +1492,7 @@ function App() {
         {vista === "captura" && <FormularioVisita />}
         {vista === "pqrs" && <PQRSPage />}
         {vista === "ayuda-memoria" && <AyudaDeMemoriaPage />}
+        {vista === "directorio" && <DirectorioPage />}
         {vista === "tablero" && <TableroPage />}
       </main>
     </div>
@@ -1316,7 +1507,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
 """,
     "src/presentation/components/Navbar.tsx": """import { useState } from "react";
 
-export type Vista = "captura" | "pqrs" | "ayuda-memoria" | "tablero";
+export type Vista = "captura" | "pqrs" | "ayuda-memoria" | "directorio" | "tablero";
 
 interface SubItem {
   vista: Vista;
@@ -1339,6 +1530,13 @@ const MENU: ItemMenu[] = [
       { vista: "captura", label: "Nueva visita", descripcion: "Registrar avance de una unidad operativa", disponible: true },
       { vista: "pqrs", label: "PQRS", descripcion: "Organización y traslado a Gestión Institucional", disponible: true },
       { vista: "ayuda-memoria", label: "Ayuda de memoria", descripcion: "Generar PDF con el formato GD-040", disponible: true },
+    ],
+  },
+  {
+    id: "directorio",
+    label: "Directorio",
+    submenus: [
+      { vista: "directorio", label: "Catálogo de unidades", descripcion: "SLIS, CDC, Lavanderías, CIAM — importar y consultar", disponible: true },
     ],
   },
   {
@@ -1637,6 +1835,49 @@ export const useAyudaDeMemoria = () => {
   return { generarPDF, loading, error };
 };
 """,
+    "src/presentation/hooks/useDirectorio.ts": """import { useEffect, useMemo, useState } from "react";
+import type { UnidadOperativa } from "../../domain/entities/UnidadOperativa";
+import { FirebaseUnidadOperativaRepository } from "../../infrastructure/repositories/FirebaseUnidadOperativaRepository";
+
+/** Trae el catalogo completo de unidades operativas (el "Directorio") una sola vez y lo deja en
+ *  memoria -- se usa para armar los selectores en cascada Subdireccion -> Servicio -> Unidad en
+ *  toda la app, sin repetir la consulta a Firestore en cada pantalla. */
+export function useDirectorio() {
+  const [unidades, setUnidades] = useState<UnidadOperativa[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const repo = useMemo(() => new FirebaseUnidadOperativaRepository(), []);
+
+  async function recargar() {
+    setLoading(true);
+    setError(null);
+    try {
+      setUnidades(await repo.listarTodas());
+    } catch (err: any) {
+      setError(err.message || "No se pudo cargar el Directorio.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { recargar(); }, []);
+
+  const subdirecciones = useMemo(
+    () => Array.from(new Set(unidades.map((u) => u.subdireccionLocal))).sort(),
+    [unidades]
+  );
+
+  function serviciosDe(subdireccionLocal: string) {
+    return Array.from(new Set(unidades.filter((u) => u.subdireccionLocal === subdireccionLocal).map((u) => u.servicio))).sort();
+  }
+
+  function unidadesDe(subdireccionLocal: string, servicio: string) {
+    return unidades.filter((u) => u.subdireccionLocal === subdireccionLocal && u.servicio === servicio);
+  }
+
+  return { unidades, subdirecciones, serviciosDe, unidadesDe, loading, error, recargar, repo };
+}
+""",
     "src/presentation/hooks/usePQRS.ts": """import { useState, useMemo } from "react";
 import type { PQRS } from "../../domain/entities/PQRS";
 import { RegistrarPQRS, type RegistrarPQRSInput } from "../../application/useCases/RegistrarPQRS";
@@ -1702,6 +1943,49 @@ export const useRegistroPeriodo = () => {
 
   return { registros, loading, error, registrar };
 };
+""",
+    "src/presentation/hooks/useTablero.ts": """import { useEffect, useMemo, useState } from "react";
+import { FirebaseRegistroPeriodoRepository } from "../../infrastructure/repositories/FirebaseRegistroPeriodoRepository";
+import { FirebasePQRSRepository } from "../../infrastructure/repositories/FirebasePQRSRepository";
+import { calcularResumenDashboard } from "../../application/services/CalcularResumenDashboard";
+import type { ResumenDashboard } from "../../domain/repositories/IRegistroPeriodoRepository";
+
+/** Trae TODOS los registros y PQRS, y calcula el resumen en el navegador -- ver la nota en
+ *  CalcularResumenDashboard sobre por que no hay un documento pre-agregado (Firestore free
+ *  tier no tiene Cloud Functions). Se puede llamar "refrescar" despues de cada captura nueva
+ *  para que el Tablero se vea actualizado sin recargar la pagina entera. */
+export function useTablero() {
+  const [resumen, setResumen] = useState<ResumenDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const repos = useMemo(() => ({
+    registros: new FirebaseRegistroPeriodoRepository(),
+    pqrs: new FirebasePQRSRepository(),
+  }), []);
+
+  async function refrescar() {
+    setLoading(true);
+    setError(null);
+    try {
+      const [registros, pqrs] = await Promise.all([
+        repos.registros.listarTodos(),
+        repos.pqrs.listarTodos(),
+      ]);
+      setResumen(calcularResumenDashboard(registros, pqrs));
+    } catch (err: any) {
+      setError(err.message || "No se pudo cargar el tablero.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refrescar();
+  }, []);
+
+  return { resumen, loading, error, refrescar };
+}
 """,
     "src/presentation/screens/AyudaDeMemoriaPage.tsx": """import { useState } from "react";
 import { useAyudaDeMemoria } from "../hooks/useAyudaDeMemoria";
@@ -1887,8 +2171,115 @@ export function AyudaDeMemoriaPage() {
   );
 }
 """,
+    "src/presentation/screens/DirectorioPage.tsx": """import { useRef, useState } from "react";
+import { useDirectorio } from "../hooks/useDirectorio";
+import type { UnidadOperativa, Dependencia } from "../../domain/entities/UnidadOperativa";
+
+function Tarjeta({ children }: { children: React.ReactNode }) {
+  return <section className="glass-card glass-card-interactiva rounded-2xl p-5 sm:p-6">{children}</section>;
+}
+
+/** Parsea un CSV con columnas: Dependencia,Servicio,Subdireccion,Nombre,Encargado
+ *  (encabezado obligatorio, en ese orden -- exportable directo desde la hoja "Directorio" del
+ *  Excel: Dependencia | Servicio | Subdirección Local | Unidad Operativa | Encargado). */
+function parsearCSV(texto: string): Array<Omit<UnidadOperativa, "id">> {
+  const lineas = texto.split(/\\r?\\n/).filter((l) => l.trim() !== "");
+  const filas = lineas.slice(1); // salta encabezado
+  return filas.map((linea) => {
+    const [dependencia, servicio, subdireccionLocal, nombre, encargado] = linea.split(",").map((c) => c.trim());
+    return {
+      dependencia: dependencia as Dependencia,
+      servicio, subdireccionLocal, nombre,
+      encargado: encargado || undefined,
+      capacidad: { metrosMedidos: null, largoEspacioM: null, anchoEspacioM: null },
+    };
+  }).filter((u) => u.nombre);
+}
+
+/** Pantalla para importar el Directorio REAL (Dependencia/Servicio/Subdirección/Unidad) desde
+ *  un CSV exportado del Excel -- para no inventar nombres de unidades institucionales, cada
+ *  SLIS/CDC/Lavandería/CIAM que la app conoce viene directo de tus datos reales. */
+export function DirectorioPage() {
+  const { unidades, subdirecciones, loading, recargar, repo } = useDirectorio();
+  const [importando, setImportando] = useState(false);
+  const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  async function manejarArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    if (!archivo) return;
+    setImportando(true);
+    setMensaje(null);
+    try {
+      const texto = await archivo.text();
+      const filas = parsearCSV(texto);
+      if (filas.length === 0) throw new Error("El archivo no tiene filas válidas. Revisa el formato de columnas.");
+      const escritas = await repo.importarLote(filas);
+      setMensaje({ tipo: "ok", texto: `${escritas} unidades importadas correctamente.` });
+      await recargar();
+    } catch (err) {
+      setMensaje({ tipo: "error", texto: err instanceof Error ? err.message : "No se pudo importar el archivo." });
+    } finally {
+      setImportando(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="space-y-5 pb-10">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-widest text-primary-600">Directorio</p>
+        <h1 className="mt-1 text-2xl font-bold text-slate-900">Catálogo de unidades operativas</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          SLIS, CDC, Lavanderías, CIAM y demás — el mismo Directorio del Excel, importado una sola vez.
+        </p>
+      </div>
+
+      <Tarjeta>
+        <p className="text-sm font-semibold text-slate-700">Importar desde CSV</p>
+        <p className="mt-1 text-xs text-slate-500">
+          Exporta la hoja "Directorio" del Excel a CSV con las columnas, en este orden:{" "}
+          <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">Dependencia,Servicio,Subdireccion,Nombre,Encargado</code>
+        </p>
+        <input
+          ref={inputRef} type="file" accept=".csv" onChange={manejarArchivo} disabled={importando}
+          className="mt-3 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-primary-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-primary-700"
+        />
+        {importando && <p className="mt-2 text-xs text-slate-400">Importando…</p>}
+        {mensaje && (
+          <p className={`mt-2 text-sm ${mensaje.tipo === "ok" ? "text-green-600" : "text-red-600"}`}>{mensaje.texto}</p>
+        )}
+      </Tarjeta>
+
+      <Tarjeta>
+        <p className="mb-3 text-sm font-semibold text-slate-700">
+          {loading ? "Cargando…" : `${unidades.length} unidades en ${subdirecciones.length} subdirecciones`}
+        </p>
+        {!loading && unidades.length === 0 && (
+          <p className="text-sm text-slate-400">
+            Todavía no hay unidades importadas. Sube el CSV de arriba para empezar.
+          </p>
+        )}
+        {subdirecciones.map((sub) => (
+          <div key={sub} className="mb-3 border-b border-slate-100 pb-3 last:border-0">
+            <p className="text-sm font-semibold text-slate-700">{sub}</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {unidades.filter((u) => u.subdireccionLocal === sub).map((u) => (
+                <span key={u.id} className="rounded-full bg-primary-50 px-2.5 py-1 text-xs text-primary-700">
+                  {u.servicio} · {u.nombre}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </Tarjeta>
+    </div>
+  );
+}
+""",
     "src/presentation/screens/FormularioVisita.tsx": """import { useMemo, useState } from "react";
 import { useRegistroPeriodo } from "../hooks/useRegistroPeriodo";
+import { useDirectorio } from "../hooks/useDirectorio";
 import {
   calcularAvancePorTarea,
   calcularAvanceTotal,
@@ -1952,6 +2343,9 @@ function Tarjeta({ children, className = "" }: { children: React.ReactNode; clas
 
 export function FormularioVisita() {
   const { registrar, loading } = useRegistroPeriodo();
+  const { subdirecciones, serviciosDe, unidadesDe, loading: cargandoDirectorio } = useDirectorio();
+  const [subdireccionSel, setSubdireccionSel] = useState("");
+  const [servicioSel, setServicioSel] = useState("");
   const [unidadOperativaId, setUnidad] = useState("");
   const [periodo, setPeriodo] = useState<PeriodoTRD>(PERIODOS[0]);
   const [totalCajas, setTotalCajas] = useState<number>(0);
@@ -1962,6 +2356,9 @@ export function FormularioVisita() {
   const [fechaVisita, setFechaVisita] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  const serviciosDisponibles = subdireccionSel ? serviciosDe(subdireccionSel) : [];
+  const unidadesDisponibles = subdireccionSel && servicioSel ? unidadesDe(subdireccionSel, servicioSel) : [];
 
   const avanceTotal = useMemo(() => calcularAvanceTotal({ totalCajas, tareas }), [totalCajas, tareas]);
   const estado = semaforo(avanceTotal);
@@ -2000,11 +2397,34 @@ export function FormularioVisita() {
       </div>
 
       <Tarjeta>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block sm:col-span-2">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="block">
+            <span className={etiqueta}>Subdirección Local</span>
+            <select className={campoBase} value={subdireccionSel}
+                    onChange={(e) => { setSubdireccionSel(e.target.value); setServicioSel(""); setUnidad(""); }}
+                    disabled={cargandoDirectorio}>
+              <option value="">{cargandoDirectorio ? "Cargando…" : "Selecciona…"}</option>
+              {subdirecciones.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Servicio</span>
+            <select className={campoBase} value={servicioSel} disabled={!subdireccionSel}
+                    onChange={(e) => { setServicioSel(e.target.value); setUnidad(""); }}>
+              <option value="">{subdireccionSel ? "Selecciona…" : "Elige subdirección primero"}</option>
+              {serviciosDisponibles.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="block">
             <span className={etiqueta}>Unidad operativa</span>
-            <input className={campoBase} value={unidadOperativaId} onChange={(e) => setUnidad(e.target.value)}
-                   placeholder="Ej. CDC Lago Timiza" />
+            <select className={campoBase} value={unidadOperativaId} disabled={!servicioSel}
+                    onChange={(e) => setUnidad(e.target.value)}>
+              <option value="">{servicioSel ? "Selecciona…" : "Elige servicio primero"}</option>
+              {unidadesDisponibles.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
+            {servicioSel && unidadesDisponibles.length === 0 && (
+              <p className="mt-1 text-xs text-amber-600">No hay unidades registradas aquí — impórtalas en "Directorio".</p>
+            )}
           </label>
           <label className="block">
             <span className={etiqueta}>Periodo / fase TRD</span>
@@ -2200,6 +2620,7 @@ export function FormularioVisita() {
 """,
     "src/presentation/screens/PQRSPage.tsx": """import { useMemo, useState } from "react";
 import { usePQRS } from "../hooks/usePQRS";
+import { useDirectorio } from "../hooks/useDirectorio";
 import {
   calcularAvancePorTarea,
   calcularAvanceTotal,
@@ -2242,6 +2663,9 @@ function Tarjeta({ children, className = "" }: { children: React.ReactNode; clas
 
 export function PQRSPage() {
   const { registrar, loading } = usePQRS();
+  const { subdirecciones, serviciosDe, unidadesDe, loading: cargandoDirectorio } = useDirectorio();
+  const [subdireccionSel, setSubdireccionSel] = useState("");
+  const [servicioSel, setServicioSel] = useState("");
   const [unidadOperativaId, setUnidad] = useState("");
   const [totalCajas, setTotalCajas] = useState<number>(0);
   const [tareas, setTareas] = useState<TareasCantidad>(VACIAS);
@@ -2250,6 +2674,9 @@ export function PQRSPage() {
   const [fechaVisita, setFechaVisita] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  const serviciosDisponibles = subdireccionSel ? serviciosDe(subdireccionSel) : [];
+  const unidadesDisponibles = subdireccionSel && servicioSel ? unidadesDe(subdireccionSel, servicioSel) : [];
 
   const avanceTotal = useMemo(() => calcularAvanceTotal({ totalCajas, tareas }), [totalCajas, tareas]);
   const estado = semaforo(avanceTotal);
@@ -2290,11 +2717,31 @@ export function PQRSPage() {
       </div>
 
       <Tarjeta>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block sm:col-span-2">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="block">
+            <span className={etiqueta}>Subdirección Local</span>
+            <select className={campoBase} value={subdireccionSel}
+                    onChange={(e) => { setSubdireccionSel(e.target.value); setServicioSel(""); setUnidad(""); }}
+                    disabled={cargandoDirectorio}>
+              <option value="">{cargandoDirectorio ? "Cargando…" : "Selecciona…"}</option>
+              {subdirecciones.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Servicio</span>
+            <select className={campoBase} value={servicioSel} disabled={!subdireccionSel}
+                    onChange={(e) => { setServicioSel(e.target.value); setUnidad(""); }}>
+              <option value="">{subdireccionSel ? "Selecciona…" : "Elige subdirección primero"}</option>
+              {serviciosDisponibles.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="block">
             <span className={etiqueta}>Unidad operativa</span>
-            <input className={campoBase} value={unidadOperativaId} onChange={(e) => setUnidad(e.target.value)}
-                   placeholder="Ej. CDC Lago Timiza" />
+            <select className={campoBase} value={unidadOperativaId} disabled={!servicioSel}
+                    onChange={(e) => setUnidad(e.target.value)}>
+              <option value="">{servicioSel ? "Selecciona…" : "Elige servicio primero"}</option>
+              {unidadesDisponibles.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
           </label>
           <label className="block">
             <span className={etiqueta}>Total cajas PQRS</span>
@@ -2426,35 +2873,130 @@ export function PQRSPage() {
   );
 }
 """,
-    "src/presentation/screens/TableroPage.tsx": """// Placeholder honesto de la Fase 3 (Dashboard). Estructuralmente ya vive donde debe -- dentro
-// del menu "Tablero" -- para que cuando se conecte a Firestore (leyendo el documento agregado
-// ResumenDashboard), solo haga falta reemplazar el contenido de este componente, no rearmar
-// la navegacion.
+    "src/presentation/screens/TableroPage.tsx": """import { useTablero } from "../hooks/useTablero";
+
+function Tarjeta({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <section className={`glass-card glass-card-interactiva rounded-2xl p-5 ${className}`}>{children}</section>;
+}
+
+function TarjetaKPI({ etiqueta, valor, color }: { etiqueta: string; valor: string; color: string }) {
+  return (
+    <Tarjeta className="flex flex-col gap-1">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{etiqueta}</p>
+      <p className="font-mono text-2xl font-bold" style={{ color }}>{valor}</p>
+    </Tarjeta>
+  );
+}
+
+/** Tablero real, Fase 3: lee TODO lo capturado en Firestore (RegistroPeriodo + PQRS) y calcula
+ *  los mismos KPIs que el Excel -- Cajas Vigentes, % Avance Global, Unidades Operativas,
+ *  Eliminación, Unidades en Riesgo Alto -- mas el desglose por Tarea y por Periodo TRD. */
 export function TableroPage() {
+  const { resumen, loading, error, refrescar } = useTablero();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <p className="text-sm text-slate-400">Cargando tablero…</p>
+      </div>
+    );
+  }
+
+  if (error || !resumen) {
+    return (
+      <Tarjeta className="text-center">
+        <p className="text-sm text-red-600">{error || "No se pudo cargar el tablero."}</p>
+        <button onClick={refrescar} className="mt-3 text-sm font-semibold text-primary-600 hover:text-primary-700">
+          Reintentar
+        </button>
+      </Tarjeta>
+    );
+  }
+
   return (
     <div className="space-y-5 pb-10">
-      <div>
-        <p className="text-xs font-bold uppercase tracking-widest text-primary-600">Tablero</p>
-        <h1 className="mt-1 text-2xl font-bold text-slate-900">Resumen general</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Esta pantalla va a mostrar, en vivo, lo mismo que el Excel: KPIs, desglose por Subdirección y por
-          Unidad Operativa -- alimentado directamente por lo que se capture en "Captura".
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-widest text-primary-600">Tablero</p>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">Resumen general</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Calculado en vivo con lo capturado hasta ahora — {resumen.unidadesOperativas} unidades operativas.
+          </p>
+        </div>
+        <button onClick={refrescar} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+          ↻ Actualizar
+        </button>
       </div>
 
-      <section className="glass-card rounded-2xl p-8 text-center">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-100">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#7D4E14" strokeWidth="1.8">
-            <path d="M4 19V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14" strokeLinecap="round" />
-            <path d="M8 19v-6M12 19v-9M16 19v-3" strokeLinecap="round" />
-          </svg>
-        </div>
-        <p className="text-base font-semibold text-slate-800">Todavía no hay datos conectados aquí</p>
-        <p className="mx-auto mt-1.5 max-w-md text-sm text-slate-500">
-          Esta vista se construye en el siguiente paso: leerá en tiempo real el resumen agregado de Firestore
-          y lo pintará igual que el Excel -- KPIs, semáforo, desglose por Subdirección.
-        </p>
-      </section>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <TarjetaKPI etiqueta="Cajas Vigentes" valor={String(resumen.cajasVigentesEnSitio)} color="#2563EB" />
+        <TarjetaKPI etiqueta="% Avance Global" valor={`${Math.round(resumen.avancePromedioGlobal * 100)}%`} color="#0F766E" />
+        <TarjetaKPI etiqueta="Unidades Operativas" valor={String(resumen.unidadesOperativas)} color="#F59E0B" />
+        <TarjetaKPI etiqueta="Eliminación (histórico)" valor={String(resumen.cajasEliminacionHistorico)} color="#0F766E" />
+        <TarjetaKPI etiqueta="Riesgo Alto" valor={String(resumen.unidadesEnRiesgoAlto)} color="#DC2626" />
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Tarjeta>
+          <p className="mb-3 text-sm font-semibold text-slate-700">% Avance por Tarea</p>
+          <div className="space-y-2.5">
+            {resumen.porTarea.map((t) => (
+              <div key={t.tarea} className="flex items-center gap-3">
+                <span className="w-28 shrink-0 text-xs text-slate-600">{t.tarea}</span>
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-full rounded-full bg-primary-500" style={{ width: `${Math.min(t.avancePromedio, 1) * 100}%` }} />
+                </div>
+                <span className="w-10 shrink-0 text-right font-mono text-xs text-slate-500">{Math.round(t.avancePromedio * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        </Tarjeta>
+
+        <Tarjeta>
+          <p className="mb-3 text-sm font-semibold text-slate-700">Cajas por Periodo TRD</p>
+          <div className="space-y-2.5">
+            {resumen.porPeriodo.length === 0 && <p className="text-sm text-slate-400">Sin datos capturados todavía.</p>}
+            {resumen.porPeriodo.map((p) => (
+              <div key={p.periodo} className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">{p.periodo}</span>
+                <span className="font-mono font-semibold text-slate-800">{p.totalCajas} cajas · {Math.round(p.avancePromedio * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        </Tarjeta>
+      </div>
+
+      <Tarjeta>
+        <p className="mb-3 text-sm font-semibold text-slate-700">Detalle por Unidad Operativa</p>
+        {resumen.porDependenciaServicio.length === 0 ? (
+          <p className="text-sm text-slate-400">Aún no hay visitas registradas.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-400">
+                  <th className="pb-2 pr-4">Unidad</th>
+                  <th className="pb-2 pr-4">Cajas Vigentes</th>
+                  <th className="pb-2">% Avance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resumen.porDependenciaServicio.map((u) => (
+                  <tr key={u.dependencia} className="border-b border-slate-100">
+                    <td className="py-2 pr-4 text-slate-700">{u.dependencia}</td>
+                    <td className="py-2 pr-4 font-mono text-slate-600">{u.totalCajas}</td>
+                    <td className="py-2 font-mono text-slate-600">{Math.round(u.avancePromedio * 100)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Tarjeta>
+
+      <p className="text-center text-xs text-slate-400">
+        Actualizado: {new Date(resumen.actualizadoEn).toLocaleString("es-CO")}
+      </p>
     </div>
   );
 }
@@ -2511,6 +3053,6 @@ def main():
         with open(ruta, "w", encoding="utf-8", newline="\n") as f: f.write(contenido)
         print(f"OK  {ruta}  ({len(contenido)} caracteres)")
     print(f"\nListo -- {len(ARCHIVOS_TEXTO)} archivos.")
-    print("Corre: npm install   (por si faltan xlsx/jspdf/jspdf-autotable)")
+    print("Corre: npm install")
     print("Despues: reinicia npm run dev y Ctrl+Shift+R")
 if __name__ == "__main__": main()

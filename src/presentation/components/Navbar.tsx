@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export type Vista = "captura" | "pqrs" | "ayuda-memoria" | "tablero";
+export type Vista = "captura" | "pqrs" | "ayuda-memoria" | "directorio" | "tablero";
 
 interface SubItem {
   vista: Vista;
@@ -23,6 +23,13 @@ const MENU: ItemMenu[] = [
       { vista: "captura", label: "Nueva visita", descripcion: "Registrar avance de una unidad operativa", disponible: true },
       { vista: "pqrs", label: "PQRS", descripcion: "Organización y traslado a Gestión Institucional", disponible: true },
       { vista: "ayuda-memoria", label: "Ayuda de memoria", descripcion: "Generar PDF con el formato GD-040", disponible: true },
+    ],
+  },
+  {
+    id: "directorio",
+    label: "Directorio",
+    submenus: [
+      { vista: "directorio", label: "Catálogo de unidades", descripcion: "SLIS, CDC, Lavanderías, CIAM — importar y consultar", disponible: true },
     ],
   },
   {

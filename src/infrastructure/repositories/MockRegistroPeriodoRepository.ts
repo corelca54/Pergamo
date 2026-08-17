@@ -14,6 +14,10 @@ export class MockRegistroPeriodoRepository implements IRegistroPeriodoRepository
     return this.registros.filter((r) => r.unidadOperativaId === unidadOperativaId);
   }
 
+  async listarTodos(): Promise<RegistroPeriodo[]> {
+    return [...this.registros];
+  }
+
   async listarPagina(params: Parameters<IRegistroPeriodoRepository["listarPagina"]>[0]) {
     let items = [...this.registros];
     if (params.periodo) items = items.filter((r) => r.periodo === params.periodo);

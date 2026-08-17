@@ -40,6 +40,11 @@ export class FirebasePQRSRepository implements IPQRSRepository {
     return snap.docs.map((d) => fromFirestore(d.id, d.data()));
   }
 
+  async listarTodos(): Promise<PQRS[]> {
+    const snap = await getDocs(collection(db, PQRS_COLECCION));
+    return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  }
+
   async guardar(p: Omit<PQRS, "id" | "creadoEn" | "actualizadoEn">): Promise<PQRS> {
     const ref = await addDoc(collection(db, PQRS_COLECCION), {
       ...limpiar(p),

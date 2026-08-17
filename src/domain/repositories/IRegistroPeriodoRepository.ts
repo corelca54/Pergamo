@@ -5,6 +5,12 @@ import type { RegistroPeriodo } from "../entities/RegistroPeriodo";
 // Azure SQL o cualquier otra cosa, sin tocar una sola linea de application/ ni presentation/.
 export interface IRegistroPeriodoRepository {
   listarPorUnidad(unidadOperativaId: string): Promise<RegistroPeriodo[]>;
+  /** Trae TODOS los registros -- se usa para calcular el resumen del lado del cliente (ver
+   *  CalcularResumenDashboard). En el plan gratuito de Firestore no hay Cloud Functions para
+   *  mantener un documento agregado, asi que el calculo se hace en el navegador, igual que
+   *  hace Excel al recalcular. Para el volumen de datos de este proyecto (cientos de filas,
+   *  no millones) esto es rapido y no cuesta nada extra. */
+  listarTodos(): Promise<RegistroPeriodo[]>;
   listarPagina(params: {
     dependencia?: string;
     subdireccionLocal?: string;

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useRegistroPeriodo } from "../hooks/useRegistroPeriodo";
+import { useDirectorio } from "../hooks/useDirectorio";
 import {
   calcularAvancePorTarea,
   calcularAvanceTotal,
@@ -63,6 +64,9 @@ function Tarjeta({ children, className = "" }: { children: React.ReactNode; clas
 
 export function FormularioVisita() {
   const { registrar, loading } = useRegistroPeriodo();
+  const { subdirecciones, serviciosDe, unidadesDe, loading: cargandoDirectorio } = useDirectorio();
+  const [subdireccionSel, setSubdireccionSel] = useState("");
+  const [servicioSel, setServicioSel] = useState("");
   const [unidadOperativaId, setUnidad] = useState("");
   const [periodo, setPeriodo] = useState<PeriodoTRD>(PERIODOS[0]);
   const [totalCajas, setTotalCajas] = useState<number>(0);
@@ -73,6 +77,9 @@ export function FormularioVisita() {
   const [fechaVisita, setFechaVisita] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  const serviciosDisponibles = subdireccionSel ? serviciosDe(subdireccionSel) : [];
+  const unidadesDisponibles = subdireccionSel && servicioSel ? unidadesDe(subdireccionSel, servicioSel) : [];
 
   const avanceTotal = useMemo(() => calcularAvanceTotal({ totalCajas, tareas }), [totalCajas, tareas]);
   const estado = semaforo(avanceTotal);
@@ -111,11 +118,34 @@ export function FormularioVisita() {
       </div>
 
       <Tarjeta>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block sm:col-span-2">
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="block">
+            <span className={etiqueta}>Subdirección Local</span>
+            <select className={campoBase} value={subdireccionSel}
+                    onChange={(e) => { setSubdireccionSel(e.target.value); setServicioSel(""); setUnidad(""); }}
+                    disabled={cargandoDirectorio}>
+              <option value="">{cargandoDirectorio ? "Cargando…" : "Selecciona…"}</option>
+              {subdirecciones.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Servicio</span>
+            <select className={campoBase} value={servicioSel} disabled={!subdireccionSel}
+                    onChange={(e) => { setServicioSel(e.target.value); setUnidad(""); }}>
+              <option value="">{subdireccionSel ? "Selecciona…" : "Elige subdirección primero"}</option>
+              {serviciosDisponibles.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="block">
             <span className={etiqueta}>Unidad operativa</span>
-            <input className={campoBase} value={unidadOperativaId} onChange={(e) => setUnidad(e.target.value)}
-                   placeholder="Ej. CDC Lago Timiza" />
+            <select className={campoBase} value={unidadOperativaId} disabled={!servicioSel}
+                    onChange={(e) => setUnidad(e.target.value)}>
+              <option value="">{servicioSel ? "Selecciona…" : "Elige servicio primero"}</option>
+              {unidadesDisponibles.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
+            {servicioSel && unidadesDisponibles.length === 0 && (
+              <p className="mt-1 text-xs text-amber-600">No hay unidades registradas aquí — impórtalas en "Directorio".</p>
+            )}
           </label>
           <label className="block">
             <span className={etiqueta}>Periodo / fase TRD</span>

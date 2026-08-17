@@ -61,6 +61,11 @@ export class FirebaseRegistroPeriodoRepository implements IRegistroPeriodoReposi
     return snap.docs.map((d) => fromFirestore(d.id, d.data()));
   }
 
+  async listarTodos(): Promise<RegistroPeriodo[]> {
+    const snap = await getDocs(collection(db, REGISTROS));
+    return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  }
+
   async listarPagina({
     dependencia,
     subdireccionLocal,
