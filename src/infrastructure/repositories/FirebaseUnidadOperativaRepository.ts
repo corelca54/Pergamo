@@ -17,6 +17,20 @@ function fromFirestore(id: string, data: any): UnidadOperativa {
   };
 }
 
+/** Misma correccion que ya se aplico en FirebaseRegistroPeriodoRepository y
+ *  FirebasePQRSRepository: Firestore rechaza CUALQUIER campo con valor undefined (el error
+ *  "WriteBatch.set() called with invalid data" que se vio al importar el CSV real -- muchas
+ *  unidades no tienen Encargado, y ese campo quedaba en undefined). Se limpia recursivamente
+ *  antes de cada escritura, para que este bug no vuelva a aparecer en ningun repositorio. */
+function limpiar<T extends Record<string, any>>(obj: T): T {
+  const limpio: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) continue;
+    limpio[k] = v && typeof v === "object" && !Array.isArray(v) ? limpiar(v) : v;
+  }
+  return limpio as T;
+}
+
 export class FirebaseUnidadOperativaRepository implements IUnidadOperativaRepository {
   async listarTodas(): Promise<UnidadOperativa[]> {
     const snap = await getDocs(collection(db, COLECCION));
@@ -35,12 +49,12 @@ export class FirebaseUnidadOperativaRepository implements IUnidadOperativaReposi
   }
 
   async guardar(u: Omit<UnidadOperativa, "id">): Promise<UnidadOperativa> {
-    const ref = await addDoc(collection(db, COLECCION), u);
+    const ref = await addDoc(collection(db, COLECCION), limpiar(u));
     return { ...u, id: ref.id };
   }
 
   async actualizar(id: string, cambios: Partial<UnidadOperativa>): Promise<void> {
-    await updateDoc(doc(db, COLECCION, id), cambios);
+    await updateDoc(doc(db, COLECCION, id), limpiar(cambios));
   }
 
   /** Escribe en lotes de 500 (limite de Firestore por batch) -- para importar el Directorio
@@ -52,7 +66,7 @@ export class FirebaseUnidadOperativaRepository implements IUnidadOperativaReposi
       const batch = writeBatch(db);
       for (const u of lote) {
         const ref = doc(collection(db, COLECCION));
-        batch.set(ref, u);
+        batch.set(ref, limpiar(u));
       }
       await batch.commit();
       escritas += lote.length;

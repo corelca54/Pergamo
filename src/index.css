@@ -105,9 +105,16 @@
     -webkit-mask-image: linear-gradient(to top, black 55%, transparent 100%);
   }
 
-  .bg-documental-pattern > * {
+  /* Solo el contenido con scroll necesita quedar por encima de los fondos animados -- el header
+     ya controla su propio z-index con la clase z-50 de Tailwind. Antes esta regla aplicaba a
+     TODOS los hijos directos por igual (incluido el header), y como tenia la misma
+     especificidad que z-50 pero aparecia despues en la hoja de estilos, terminaba ganando y
+     bajandole el z-index al header -- eso hacia que el area de contenido (que va despues en el
+     orden del documento) quedara ENCIMA del menu desplegable, interceptando los clics aunque
+     visualmente se viera bien. */
+  .bg-documental-pattern > .contenido-con-scroll {
     position: relative;
-    z-index: 1;
+    z-index: 10;
   }
 }
 
@@ -123,9 +130,23 @@
   100% { transform: translate(-3%, 3%); }
 }
 
+/* Franja del header: degradado que fluye de un lado a otro, sin parar -- da sensacion de
+   "algo vivo/interactivo" sin texto ni distraer del contenido. background-size mas ancho que
+   el elemento + animar background-position es la forma estandar de lograr esto con CSS puro. */
+.banner-animado {
+  background-size: 200% 100%;
+  animation: fluir-degradado 6s linear infinite;
+}
+
+@keyframes fluir-degradado {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bg-documental-pattern::before,
   .bg-documental-pattern::after { animation: none; }
+  .banner-animado { animation: none; }
 }
 
 /* Vidrio esmerilado real: fondo translucido (se ve el color de atras), blur fuerte, borde que

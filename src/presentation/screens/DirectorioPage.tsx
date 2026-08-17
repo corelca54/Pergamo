@@ -57,16 +57,12 @@ export function DirectorioPage() {
       <div>
         <p className="text-xs font-bold uppercase tracking-widest text-primary-600">Directorio</p>
         <h1 className="mt-1 text-2xl font-bold text-slate-900">Catálogo de unidades operativas</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          SLIS, CDC, Lavanderías, CIAM y demás — el mismo Directorio del Excel, importado una sola vez.
-        </p>
       </div>
 
       <Tarjeta>
         <p className="text-sm font-semibold text-slate-700">Importar desde CSV</p>
-        <p className="mt-1 text-xs text-slate-500">
-          Exporta la hoja "Directorio" del Excel a CSV con las columnas, en este orden:{" "}
-          <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">Dependencia,Servicio,Subdireccion,Nombre,Encargado</code>
+        <p className="mt-1 text-xs text-slate-400">
+          Columnas: <code className="rounded bg-slate-100 px-1 py-0.5">Dependencia,Servicio,Subdireccion,Nombre,Encargado</code>
         </p>
         <input
           ref={inputRef} type="file" accept=".csv" onChange={manejarArchivo} disabled={importando}

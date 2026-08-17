@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type Vista = "captura" | "pqrs" | "ayuda-memoria" | "directorio" | "tablero";
 
@@ -36,36 +36,48 @@ const MENU: ItemMenu[] = [
     id: "tablero",
     label: "Tablero",
     submenus: [
-      { vista: "tablero", label: "Resumen general", descripcion: "KPIs consolidados, igual que el Excel", disponible: false },
+      { vista: "tablero", label: "Resumen general", descripcion: "KPIs consolidados, igual que el Excel", disponible: true },
     ],
   },
 ];
 
-/** A que grupo del menu pertenece la vista activa -- para resaltar el boton padre correcto. */
 function grupoDe(vista: Vista): string {
   return MENU.find((m) => m.submenus.some((s) => s.vista === vista))?.id ?? "captura";
 }
 
 export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista: (v: Vista) => void }) {
   const [abierto, setAbierto] = useState<string | null>(null);
+  const contenedorRef = useRef<HTMLElement>(null);
   const grupoActivo = grupoDe(vista);
 
-  return (
-    <header className="fixed inset-x-0 top-0 z-50">
-      {/* Banner superior: franja institucional alusiva a gestion documental. Texto mas corto
-          en movil -- el completo no cabe en una linea y se veia cortado feo. */}
-      <div className="bg-gradient-to-r from-primary-900 via-primary-800 to-primary-700 text-primary-50">
-        <div className="mx-auto flex max-w-5xl items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium tracking-wide">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 opacity-80">
-            <path d="M4 4h16v16H4z" strokeLinejoin="round" />
-            <path d="M4 9h16M9 4v16" />
-          </svg>
-          <span className="hidden sm:inline">Trazabilidad TRD de principio a fin — de la visita en sitio al tablero de la Dirección</span>
-          <span className="sm:hidden">Trazabilidad TRD, de la visita al tablero</span>
-        </div>
-      </div>
+  // Cambiado de "abrir con onMouseEnter/cerrar con onMouseLeave" a "abrir/cerrar con clic" --
+  // el hover tenia un hueco entre el boton y el desplegable donde el mouse podia disparar
+  // mouseleave antes de que el clic en un submenu llegara a registrarse (por eso "no se
+  // dejaban clickear"). Con clic no depende de mantener el mouse en una zona exacta, y de paso
+  // funciona en pantallas tactiles, donde el hover no existe.
+  useEffect(() => {
+    function alClicFuera(e: MouseEvent) {
+      if (contenedorRef.current && !contenedorRef.current.contains(e.target as Node)) {
+        setAbierto(null);
+      }
+    }
+    document.addEventListener("mousedown", alClicFuera);
+    return () => document.removeEventListener("mousedown", alClicFuera);
+  }, []);
 
-      {/* Barra principal */}
+  function seleccionarSubmenu(sub: SubItem) {
+    if (!sub.disponible) return;
+    onCambiarVista(sub.vista);
+    setAbierto(null);
+  }
+
+  return (
+    <header ref={contenedorRef} className="relative z-50">
+      {/* Header en flujo normal (SIN position:fixed) -- el layout completo vive en main.tsx
+          como un contenedor de altura fija con scroll interno, para que el header nunca se
+          mueva sin depender de que "fixed" se comporte bien en cada navegador/entorno. */}
+      <div className="banner-animado h-2 bg-gradient-to-r from-primary-700 via-accent-500 to-primary-700" />
+
       <div className="glass-card border-b border-white/40 shadow-sm">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
@@ -78,22 +90,21 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
             </div>
           </div>
 
-          {/* Menu con submenus (desktop) -- cada submenu navega a su propia vista */}
+          {/* Menu con submenus (desktop) -- clic para abrir/cerrar, no hover */}
           <nav className="hidden items-center gap-1 sm:flex">
             {MENU.map((item) => (
-              <div
-                key={item.id}
-                className="relative"
-                onMouseEnter={() => setAbierto(item.id)}
-                onMouseLeave={() => setAbierto(null)}
-              >
+              <div key={item.id} className="relative">
                 <button
-                  onClick={() => onCambiarVista(item.submenus[0].vista)}
-                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  onClick={() => setAbierto(abierto === item.id ? null : item.id)}
+                  className={`flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                     grupoActivo === item.id ? "bg-primary-700 text-white" : "text-slate-700 hover:bg-primary-50"
                   }`}
                 >
                   {item.label}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                       className={`transition-transform ${abierto === item.id ? "rotate-180" : ""}`}>
+                    <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
                 </button>
                 {abierto === item.id && (
                   <div className="absolute left-0 top-full w-72 pt-2">
@@ -104,7 +115,7 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
                           className={`rounded-lg px-3 py-2 text-sm ${
                             sub.disponible ? "cursor-pointer hover:bg-primary-50" : "cursor-default opacity-50"
                           } ${vista === sub.vista ? "bg-primary-50" : ""}`}
-                          onClick={() => sub.disponible && onCambiarVista(sub.vista)}
+                          onClick={() => seleccionarSubmenu(sub)}
                         >
                           <div className="flex items-center justify-between font-semibold text-slate-800">
                             {sub.label}
@@ -130,7 +141,7 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
           </span>
         </div>
 
-        {/* Menu movil: acordeon simple, ya que ahora hay submenus reales de verdad */}
+        {/* Menu movil: acordeon simple */}
         <div className="flex flex-wrap gap-1 border-t border-white/40 px-4 py-2 sm:hidden">
           {MENU.flatMap((item) => item.submenus.filter((s) => s.disponible)).map((sub) => (
             <button

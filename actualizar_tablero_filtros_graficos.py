@@ -1,4 +1,252 @@
-import { useMemo, useState } from "react";
+# -*- coding: utf-8 -*-
+"""
+Tablero con filtros reales (los mismos 4 del Excel: Subdireccion, Dependencia, Servicio,
+Periodo TRD, combinables entre si) y graficos con Chart.js con estilo de profundidad --
+degradado vertical + barras redondeadas en el grafico de Tareas, dona con separacion y
+etiquetas de porcentaje en el grafico de Periodos. package.json ya trae chart.js,
+react-chartjs-2 y chartjs-plugin-datalabels declarados.
+
+Correlo desde la raiz de tu proyecto: python actualizar_tablero_filtros_graficos.py
+Despues corre: npm install
+"""
+import os
+
+ARCHIVOS_TEXTO = {
+    "package.json": """{
+  "name": "pergamo",
+  "version": "1.0.0",
+  "description": "Aplicación PWA para auditoría de gestión documental y TRD",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "sgil",
+    "gestion-documental",
+    "react"
+  ],
+  "author": "Developer_Ecc",
+  "license": "ISC",
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "chartjs-plugin-datalabels": "^2.2.0",
+    "firebase": "^12.16.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "react": "^19.2.7",
+    "react-chartjs-2": "^5.3.1",
+    "react-dom": "^19.2.7",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.23",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.5.4",
+    "vite": "^8.1.5",
+    "vite-plugin-pwa": "^1.3.0",
+    "vite-tsconfig-paths": "^6.1.1"
+  }
+}
+""",
+    "src/application/services/CalcularResumenDashboard.ts": """// Calcula el resumen del Tablero del lado del cliente -- reutiliza EXACTAMENTE las mismas
+// funciones de dominio que ya validamos (calcularAvanceTotal, semaforo, cajasVigentes,
+// avanceOrganizacionPQRS) en vez de reinventar la formula aqui. Si algun dia se agrega una
+// Cloud Function para pre-calcular esto en el servidor, la logica de negocio no cambia -- solo
+// cambia QUIEN la ejecuta.
+import type { RegistroPeriodo } from "../../domain/entities/RegistroPeriodo";
+import { calcularAvanceTotal, cajasVigentes, nivelRiesgo } from "../../domain/entities/RegistroPeriodo";
+import type { PQRS } from "../../domain/entities/PQRS";
+import type { UnidadOperativa } from "../../domain/entities/UnidadOperativa";
+import type { ResumenDashboard } from "../../domain/repositories/IRegistroPeriodoRepository";
+
+const TAREAS_ORDEN: Array<{ key: keyof RegistroPeriodo["tareas"]; label: string }> = [
+  { key: "fuid", label: "FUID" },
+  { key: "eliminacion", label: "Eliminación" },
+  { key: "clasificacion", label: "Clasificación" },
+  { key: "ordenacion", label: "Ordenación" },
+  { key: "foliacion", label: "Foliación" },
+  { key: "hojaControl", label: "Hoja de Control" },
+  { key: "rotulacion", label: "Rotulación" },
+];
+
+const SIN_DIRECTORIO = "(sin datos en Directorio)";
+
+export interface FiltrosTablero {
+  subdireccionLocal?: string;
+  dependencia?: string;
+  servicio?: string;
+  periodo?: string;
+}
+
+/** Ahora que existe el Directorio real, esta funcion recibe tambien la lista de unidades para
+ *  poder resolver cada RegistroPeriodo.unidadOperativaId (un id interno de Firestore, no algo
+ *  legible) hacia su nombre, servicio y subdireccion reales -- antes de esto, el Tablero
+ *  agrupaba por el id crudo, que no le dice nada a nadie.
+ *
+ *  Los 4 filtros (Subdireccion, Dependencia, Servicio, Periodo) son EXACTAMENTE los mismos 4
+ *  del Excel, combinables entre si -- se resuelven aqui mismo, antes de agregar nada, para que
+ *  todo el resumen (KPIs, graficos, tablas) respete el mismo filtro a la vez. */
+export function calcularResumenDashboard(
+  registrosSinFiltrar: RegistroPeriodo[],
+  pqrsSinFiltrar: PQRS[],
+  unidades: UnidadOperativa[],
+  filtros: FiltrosTablero = {}
+): ResumenDashboard {
+  const porId = new Map(unidades.map((u) => [u.id, u]));
+  const resolver = (id: string) => porId.get(id) ?? null;
+
+  function pasaFiltro(unidadId: string): boolean {
+    const u = resolver(unidadId);
+    if (!u) return !filtros.subdireccionLocal && !filtros.dependencia && !filtros.servicio;
+    if (filtros.subdireccionLocal && u.subdireccionLocal !== filtros.subdireccionLocal) return false;
+    if (filtros.dependencia && u.dependencia !== filtros.dependencia) return false;
+    if (filtros.servicio && u.servicio !== filtros.servicio) return false;
+    return true;
+  }
+
+  const registros = registrosSinFiltrar.filter(
+    (r) => pasaFiltro(r.unidadOperativaId) && (!filtros.periodo || r.periodo === filtros.periodo)
+  );
+  const pqrs = pqrsSinFiltrar.filter((p) => pasaFiltro(p.unidadOperativaId));
+
+  const cajasVigentesEnSitio = registros.reduce((acc, r) => acc + cajasVigentes(r), 0);
+  const totalCajasHistorico = registros.reduce((acc, r) => acc + r.totalCajas, 0);
+  const avances = registros.map((r) => calcularAvanceTotal(r));
+  const avancePromedioGlobal = avances.length ? avances.reduce((a, b) => a + b, 0) / avances.length : 0;
+  const unidadesOperativas = new Set(registros.map((r) => r.unidadOperativaId)).size;
+
+  const cajasEliminacionHistorico = registros.reduce((acc, r) => acc + (r.tareas.eliminacion ?? 0), 0);
+  const hoy = new Date(); const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString();
+  const cajasEliminacionEstePeriodo = registros
+    .filter((r) => r.actualizadoEn >= inicioMes)
+    .reduce((acc, r) => acc + (r.tareas.eliminacion ?? 0), 0);
+
+  const unidadesEnRiesgoAlto = new Set(
+    registros.filter((r) => nivelRiesgo(r.diagnostico) === "rojo").map((r) => r.unidadOperativaId)
+  ).size;
+
+  const cajasSobreapiladas = registros.reduce((acc, r) => acc + (r.diagnostico.cajasSobreapiladas || 0), 0);
+  const metrosEspacioAjenoInvadido = registros.reduce((acc, r) => acc + (r.diagnostico.metrosEspacioAjenoInvadido || 0), 0);
+
+  // Por Dependencia/Servicio -- ahora resuelve el nombre real de la unidad via el Directorio,
+  // en vez de mostrar el id interno de Firestore.
+  const grupos = new Map<string, RegistroPeriodo[]>();
+  for (const r of registros) grupos.set(r.unidadOperativaId, [...(grupos.get(r.unidadOperativaId) ?? []), r]);
+  const porDependenciaServicio = Array.from(grupos.entries()).map(([unidadId, regs]) => {
+    const u = resolver(unidadId);
+    return {
+      dependencia: u ? `${u.dependencia} · ${u.nombre}` : SIN_DIRECTORIO,
+      servicio: u?.servicio ?? "",
+      totalCajas: regs.reduce((acc, r) => acc + cajasVigentes(r), 0),
+      avancePromedio: regs.reduce((acc, r) => acc + calcularAvanceTotal(r), 0) / regs.length,
+    };
+  });
+
+  const porTarea = TAREAS_ORDEN.map(({ key, label }) => {
+    const valores = registros
+      .map((r) => {
+        const cant = r.tareas[key];
+        if (cant === null || cant === undefined) return null;
+        return r.totalCajas > 0 ? cant / r.totalCajas : 0;
+      })
+      .filter((v): v is number => v !== null);
+    return { tarea: label, avancePromedio: valores.length ? valores.reduce((a, b) => a + b, 0) / valores.length : 0 };
+  });
+
+  const periodos = new Map<string, RegistroPeriodo[]>();
+  for (const r of registros) periodos.set(r.periodo, [...(periodos.get(r.periodo) ?? []), r]);
+  const porPeriodo = Array.from(periodos.entries()).map(([periodo, regs]) => ({
+    periodo,
+    totalCajas: regs.reduce((acc, r) => acc + cajasVigentes(r), 0),
+    avancePromedio: regs.reduce((acc, r) => acc + calcularAvanceTotal(r), 0) / regs.length,
+  }));
+
+  // Sobreapilamiento por Subdireccion: el nivel intermedio que faltaba -- ya se puede calcular
+  // de verdad porque el Directorio conoce la subdireccion de cada unidad.
+  const porSubdireccion = new Map<string, RegistroPeriodo[]>();
+  for (const r of registros) {
+    const u = resolver(r.unidadOperativaId);
+    const sub = u?.subdireccionLocal ?? SIN_DIRECTORIO;
+    porSubdireccion.set(sub, [...(porSubdireccion.get(sub) ?? []), r]);
+  }
+  const sobreapilamientoPorSubdireccion = Array.from(porSubdireccion.entries())
+    .filter(([sub]) => sub !== SIN_DIRECTORIO)
+    .map(([subdireccionLocal, regs]) => ({
+      subdireccionLocal,
+      cajasSobreapiladas: regs.reduce((acc, r) => acc + (r.diagnostico.cajasSobreapiladas || 0), 0),
+      metrosEspacioAjenoInvadido: regs.reduce((acc, r) => acc + (r.diagnostico.metrosEspacioAjenoInvadido || 0), 0),
+    }));
+
+  return {
+    cajasVigentesEnSitio, totalCajasHistorico, avancePromedioGlobal, unidadesOperativas,
+    cajasEliminacionHistorico, cajasEliminacionEstePeriodo, unidadesEnRiesgoAlto,
+    cajasSobreapiladas, metrosEspacioAjenoInvadido,
+    porDependenciaServicio, porTarea, porPeriodo, sobreapilamientoPorSubdireccion,
+    actualizadoEn: new Date().toISOString(),
+  };
+}
+""",
+    "src/presentation/hooks/useTablero.ts": """import { useEffect, useMemo, useState } from "react";
+import { FirebaseRegistroPeriodoRepository } from "../../infrastructure/repositories/FirebaseRegistroPeriodoRepository";
+import { FirebasePQRSRepository } from "../../infrastructure/repositories/FirebasePQRSRepository";
+import { FirebaseUnidadOperativaRepository } from "../../infrastructure/repositories/FirebaseUnidadOperativaRepository";
+import { calcularResumenDashboard } from "../../application/services/CalcularResumenDashboard";
+import type { FiltrosTablero } from "../../application/services/CalcularResumenDashboard";
+import type { RegistroPeriodo } from "../../domain/entities/RegistroPeriodo";
+import type { PQRS } from "../../domain/entities/PQRS";
+import type { UnidadOperativa } from "../../domain/entities/UnidadOperativa";
+
+/** Trae TODO una sola vez (registros, PQRS, Directorio) y lo deja en memoria -- filtrar despues
+ *  es instantaneo (recalculo local con useMemo), sin volver a consultar Firestore cada vez que
+ *  alguien cambia un filtro. Los 4 filtros son EXACTAMENTE los mismos del Excel, combinables. */
+export function useTablero(filtros: FiltrosTablero) {
+  const [registros, setRegistros] = useState<RegistroPeriodo[]>([]);
+  const [pqrs, setPqrs] = useState<PQRS[]>([]);
+  const [unidades, setUnidades] = useState<UnidadOperativa[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const repos = useMemo(() => ({
+    registros: new FirebaseRegistroPeriodoRepository(),
+    pqrs: new FirebasePQRSRepository(),
+    directorio: new FirebaseUnidadOperativaRepository(),
+  }), []);
+
+  async function refrescar() {
+    setLoading(true);
+    setError(null);
+    try {
+      const [r, p, u] = await Promise.all([
+        repos.registros.listarTodos(),
+        repos.pqrs.listarTodos(),
+        repos.directorio.listarTodas(),
+      ]);
+      setRegistros(r); setPqrs(p); setUnidades(u);
+    } catch (err: any) {
+      setError(err.message || "No se pudo cargar el tablero.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { refrescar(); }, []);
+
+  const resumen = useMemo(
+    () => calcularResumenDashboard(registros, pqrs, unidades, filtros),
+    [registros, pqrs, unidades, filtros]
+  );
+
+  return { resumen, unidades, loading, error, refrescar };
+}
+""",
+    "src/presentation/screens/TableroPage.tsx": """import { useMemo, useState } from "react";
 import { Bar, Doughnut } from "react-chartjs-2";
 import {
   Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement,
@@ -268,3 +516,21 @@ export function TableroPage() {
     </div>
   );
 }
+""",
+}
+
+
+def main():
+    if not os.path.exists("package.json"):
+        print("AVISO: corre esto desde la raiz de tu proyecto (donde esta package.json).")
+        return
+    for ruta, c in ARCHIVOS_TEXTO.items():
+        os.makedirs(os.path.dirname(ruta) or ".", exist_ok=True)
+        with open(ruta, "w", encoding="utf-8", newline="\n") as f:
+            f.write(c)
+        print(f"OK  {ruta}  ({len(c)} caracteres)")
+    print("\nListo. Corre: npm install")
+    print("Despues: reinicia npm run dev y Ctrl+Shift+R")
+
+if __name__ == "__main__":
+    main()

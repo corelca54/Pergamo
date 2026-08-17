@@ -1,32 +1,39 @@
 import { useEffect, useMemo, useState } from "react";
 import { FirebaseRegistroPeriodoRepository } from "../../infrastructure/repositories/FirebaseRegistroPeriodoRepository";
 import { FirebasePQRSRepository } from "../../infrastructure/repositories/FirebasePQRSRepository";
+import { FirebaseUnidadOperativaRepository } from "../../infrastructure/repositories/FirebaseUnidadOperativaRepository";
 import { calcularResumenDashboard } from "../../application/services/CalcularResumenDashboard";
-import type { ResumenDashboard } from "../../domain/repositories/IRegistroPeriodoRepository";
+import type { FiltrosTablero } from "../../application/services/CalcularResumenDashboard";
+import type { RegistroPeriodo } from "../../domain/entities/RegistroPeriodo";
+import type { PQRS } from "../../domain/entities/PQRS";
+import type { UnidadOperativa } from "../../domain/entities/UnidadOperativa";
 
-/** Trae TODOS los registros y PQRS, y calcula el resumen en el navegador -- ver la nota en
- *  CalcularResumenDashboard sobre por que no hay un documento pre-agregado (Firestore free
- *  tier no tiene Cloud Functions). Se puede llamar "refrescar" despues de cada captura nueva
- *  para que el Tablero se vea actualizado sin recargar la pagina entera. */
-export function useTablero() {
-  const [resumen, setResumen] = useState<ResumenDashboard | null>(null);
+/** Trae TODO una sola vez (registros, PQRS, Directorio) y lo deja en memoria -- filtrar despues
+ *  es instantaneo (recalculo local con useMemo), sin volver a consultar Firestore cada vez que
+ *  alguien cambia un filtro. Los 4 filtros son EXACTAMENTE los mismos del Excel, combinables. */
+export function useTablero(filtros: FiltrosTablero) {
+  const [registros, setRegistros] = useState<RegistroPeriodo[]>([]);
+  const [pqrs, setPqrs] = useState<PQRS[]>([]);
+  const [unidades, setUnidades] = useState<UnidadOperativa[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const repos = useMemo(() => ({
     registros: new FirebaseRegistroPeriodoRepository(),
     pqrs: new FirebasePQRSRepository(),
+    directorio: new FirebaseUnidadOperativaRepository(),
   }), []);
 
   async function refrescar() {
     setLoading(true);
     setError(null);
     try {
-      const [registros, pqrs] = await Promise.all([
+      const [r, p, u] = await Promise.all([
         repos.registros.listarTodos(),
         repos.pqrs.listarTodos(),
+        repos.directorio.listarTodas(),
       ]);
-      setResumen(calcularResumenDashboard(registros, pqrs));
+      setRegistros(r); setPqrs(p); setUnidades(u);
     } catch (err: any) {
       setError(err.message || "No se pudo cargar el tablero.");
     } finally {
@@ -34,9 +41,12 @@ export function useTablero() {
     }
   }
 
-  useEffect(() => {
-    refrescar();
-  }, []);
+  useEffect(() => { refrescar(); }, []);
 
-  return { resumen, loading, error, refrescar };
+  const resumen = useMemo(
+    () => calcularResumenDashboard(registros, pqrs, unidades, filtros),
+    [registros, pqrs, unidades, filtros]
+  );
+
+  return { resumen, unidades, loading, error, refrescar };
 }
