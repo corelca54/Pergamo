@@ -1,20 +1,52 @@
 # -*- coding: utf-8 -*-
-"""
-Script CONSOLIDADO v5 de Pergamo -- de vuelta al menu ARRIBA (banner + barra + submenus), esta
-vez genuinamente fijo: la causa real del bug anterior (overflow-x:hidden en el fondo) ya se
-elimino, asi que el header se queda en su sitio al hacer scroll. El componente Sidebar.tsx sigue
-en el proyecto por si se quiere retomar despues, pero main.tsx ya no lo usa. Incluye TODO el
-estado actual del proyecto.
-
-OJO: este script NO toca src/infrastructure/config/firebase.ts (tus credenciales reales) ni los
-iconos PNG de public/ (binarios, sin cambios desde la primera actualizacion).
-
-Correlo desde la raiz de tu proyecto (donde esta package.json), con:
-python actualizar_pergamo_FINAL5.py
+"""Script CONSOLIDADO v9 de Pergamo -- agrega las pantallas reales de captura para PQRS y Ayuda
+de Memoria (formato GD-040, PDF descargable), y las conecta al menu (submenus reales dentro de
+"Captura": Nueva visita / PQRS / Ayuda de memoria). Incluye TODO el estado actual del proyecto.
+NO toca src/infrastructure/config/firebase.ts (tus credenciales) ni los iconos PNG.
+Correlo desde la raiz de tu proyecto: python actualizar_pergamo_FINAL9.py
 """
 import os
-
 ARCHIVOS_TEXTO = {
+    "package.json": """{
+  "name": "pergamo",
+  "version": "1.0.0",
+  "description": "Aplicación PWA para auditoría de gestión documental y TRD",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "sgil",
+    "gestion-documental",
+    "react"
+  ],
+  "author": "Developer_Ecc",
+  "license": "ISC",
+  "dependencies": {
+    "firebase": "^12.16.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.23",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.5.4",
+    "vite": "^8.1.5",
+    "vite-plugin-pwa": "^1.3.0",
+    "vite-tsconfig-paths": "^6.1.1"
+  }
+}
+""",
     "public/estanteria-archivo.svg": """<svg width="1400" height="480" viewBox="0 0 1400 480" xmlns="http://www.w3.org/2000/svg">
   <!-- Ilustracion original de estanteria de archivo, generada proceduralmente para Pergamo:
        cada caja tiene cara frontal + cara superior (simula profundidad real) + sombra propia
@@ -215,6 +247,101 @@ export class RegistrarAvancePeriodo {
   }
 }
 """,
+    "src/application/useCases/RegistrarPQRS.ts": """import type { IPQRSRepository } from "../../domain/repositories/IPQRSRepository";
+import type { PQRS, TrasladoPQRS } from "../../domain/entities/PQRS";
+import { puedeIniciarTraslado } from "../../domain/entities/PQRS";
+import type { TareasCantidad } from "../../domain/entities/RegistroPeriodo";
+
+export interface RegistrarPQRSInput {
+  unidadOperativaId: string;
+  totalCajas: number;
+  tareas: TareasCantidad;
+  traslado: TrasladoPQRS;
+  encargado?: string;
+  fechaVisita?: string;
+  observaciones?: string;
+}
+
+export class ValidacionPQRSError extends Error {}
+
+export class RegistrarPQRS {
+  constructor(private readonly repo: IPQRSRepository) {}
+
+  async ejecutar(input: RegistrarPQRSInput): Promise<PQRS> {
+    if (input.totalCajas <= 0) {
+      throw new ValidacionPQRSError("El total de cajas debe ser mayor a 0.");
+    }
+    for (const [tarea, cantidad] of Object.entries(input.tareas)) {
+      if (cantidad === null || cantidad === undefined) continue;
+      if (cantidad < 0) throw new ValidacionPQRSError(`${tarea}: la cantidad no puede ser negativa.`);
+      if (cantidad > input.totalCajas) {
+        throw new ValidacionPQRSError(`${tarea}: ${cantidad} cajas supera el total de ${input.totalCajas}.`);
+      }
+    }
+    // Regla de negocio central de PQRS: no se puede notificar a la Subsecretaria de Gestion
+    // Institucional ni marcar traslado sobre PQRS que aun no completo su organizacion.
+    if (
+      (input.traslado.correoEnviado || input.traslado.trasladado) &&
+      !puedeIniciarTraslado({ totalCajas: input.totalCajas, tareas: input.tareas })
+    ) {
+      throw new ValidacionPQRSError(
+        "No se puede notificar ni trasladar PQRS cuya organización aún no está completa."
+      );
+    }
+    if (input.traslado.cajasTrasladadas > input.totalCajas) {
+      throw new ValidacionPQRSError("Cajas trasladadas no puede superar el total de cajas.");
+    }
+    return this.repo.guardar(input);
+  }
+}
+""",
+    "src/domain/entities/AyudaDeMemoria.ts": """// Espejo exacto del formato institucional GD-040 "Ayuda de Memoria" de la SDIS. Los nombres de
+// campo siguen la plantilla real (Lugar, Tema, Desarrollo, Asistentes, Compromisos, Proxima
+// reunion, Elaboro) para que el PDF que genera la PWA se vea igual al que ya usa el equipo --
+// no una reinterpretacion mia del formato.
+
+export interface AsistenteActa {
+  nombre: string;
+  cargoRol: string;
+  /** "No aplica" si es usuario o beneficiario (asi lo indica la plantilla original). */
+  dependencia: string;
+  /** Firma fisica en papel (se imprime y se firma a mano) -- por eso queda como espacio en
+   *  blanco en el PDF, no como un campo de texto a llenar en la app. */
+}
+
+export interface CompromisoActa {
+  actividad: string;
+  responsable: string;
+  fechaLimite: string; // ISO date
+}
+
+export interface AyudaDeMemoria {
+  id: string;
+  /** "Lugar": dependencia o entidad donde se realizo la reunion (no una direccion fisica). */
+  lugar: string;
+  fecha: string; // ISO date, formato de despliegue DD/MM/AAAA como pide la plantilla
+  tema: string;
+  /** Puntos especificos tratados u orden del dia. */
+  desarrollo: string;
+  asistentes: AsistenteActa[];
+  compromisos: CompromisoActa[];
+  /** Opcional -- la plantilla dice "si fue establecida". */
+  proximaReunion?: string;
+  elaboroPor: string;
+  unidadOperativaId?: string; // vinculo opcional a la visita/unidad que origino la reunion
+  creadoEn: string;
+}
+
+export function validarAyudaDeMemoria(a: Pick<AyudaDeMemoria, "lugar" | "fecha" | "tema" | "elaboroPor" | "asistentes">): string[] {
+  const errores: string[] = [];
+  if (!a.lugar?.trim()) errores.push("Lugar es obligatorio.");
+  if (!a.fecha) errores.push("Fecha es obligatoria.");
+  if (!a.tema?.trim()) errores.push("Tema es obligatorio.");
+  if (!a.elaboroPor?.trim()) errores.push("Elaboró es obligatorio.");
+  if (!a.asistentes || a.asistentes.length === 0) errores.push("Debe registrar al menos un asistente.");
+  return errores;
+}
+""",
     "src/domain/entities/Compromiso.ts": """// Idea que ya traia el scaffold original (seguimiento de compromisos de una visita/reunion) --
 // NO existe en el Excel, asi que vive aparte, sin mezclarse con RegistroPeriodo. Util para
 // actas de mesas de trabajo con la Subdireccion, pero no es "avance de tareas archivisticas".
@@ -229,6 +356,61 @@ export interface Compromiso {
   fechaLimite?: string; // ISO date
   estado: EstadoCompromiso;
   creadoEn: string;
+}
+""",
+    "src/domain/entities/PQRS.ts": """// PQRS (Peticiones, Quejas, Reclamos y Sugerencias) vive en cada Unidad Operativa como cualquier
+// otro expediente, y pasa por EL MISMO flujo de organizacion archivistico que el TRD normal
+// (misma logica de tareas/porcentaje que RegistroPeriodo) -- la diferencia real esta en el
+// destino final: NO es Archivo Central, es la Subsecretaria de Gestion Institucional, que es la
+// responsable de su custodia. Por eso es una entidad aparte, aunque comparte estructura.
+import type { TareasCantidad } from "./RegistroPeriodo";
+import { calcularAvanceTotal as calcularAvanceTareas, semaforo, type Semaforo } from "./RegistroPeriodo";
+
+export interface TrasladoPQRS {
+  correoEnviado: boolean;
+  fechaCorreo?: string; // ISO date -- cuando se notifico a la Subsecretaria de Gestion Institucional
+  aprobado: boolean;
+  fechaAprobacion?: string;
+  /** El traslado en si -- distinto del traslado a Archivo Central de RegistroPeriodo. */
+  trasladado: boolean;
+  fechaTraslado?: string;
+  cajasTrasladadas: number;
+}
+
+export interface PQRS {
+  id: string;
+  unidadOperativaId: string;
+  /** Se cuenta en CAJAS, igual que el resto del proceso archivistico (no en carpetas). */
+  totalCajas: number;
+  tareas: TareasCantidad;
+  traslado: TrasladoPQRS;
+  encargado?: string;
+  fechaVisita?: string;
+  observaciones?: string;
+  creadoEn: string;
+  actualizadoEn: string;
+}
+
+/** Reutiliza EXACTAMENTE la misma formula de avance y el mismo semaforo de 3 colores que
+ *  RegistroPeriodo -- "mismo flujo de organizacion" significa que no debe haber una regla
+ *  paralela que se pueda desincronizar de la real. */
+export function avanceOrganizacionPQRS(p: Pick<PQRS, "totalCajas" | "tareas">): number {
+  return calcularAvanceTareas({ totalCajas: p.totalCajas, tareas: p.tareas });
+}
+
+export function semaforoPQRS(p: Pick<PQRS, "totalCajas" | "tareas">): Semaforo {
+  return semaforo(avanceOrganizacionPQRS(p));
+}
+
+/** Solo se puede notificar/trasladar cuando el avance de organizacion esta completo (90%+,
+ *  mismo umbral "verde" que el resto de la app) -- evita avisarle a la Subsecretaria por algo
+ *  que en realidad todavia no esta listo. */
+export function puedeIniciarTraslado(p: Pick<PQRS, "totalCajas" | "tareas">): boolean {
+  return semaforoPQRS(p) === "verde";
+}
+
+export function cajasVigentesPQRS(p: Pick<PQRS, "totalCajas" | "traslado">): number {
+  return p.totalCajas - (p.traslado?.cajasTrasladadas ?? 0);
 }
 """,
     "src/domain/entities/RegistroPeriodo.ts": """// Espejo de una fila de "Datos_BD" en el Excel: Unidad Operativa + Periodo TRD + visita.
@@ -460,6 +642,14 @@ export interface ICompromisoRepository {
   actualizarEstado(id: string, estado: Compromiso["estado"]): Promise<void>;
 }
 """,
+    "src/domain/repositories/IPQRSRepository.ts": """import type { PQRS } from "../entities/PQRS";
+
+export interface IPQRSRepository {
+  listarPorUnidad(unidadOperativaId: string): Promise<PQRS[]>;
+  guardar(p: Omit<PQRS, "id" | "creadoEn" | "actualizadoEn">): Promise<PQRS>;
+  actualizar(id: string, cambios: Partial<PQRS>): Promise<void>;
+}
+""",
     "src/domain/repositories/IRegistroPeriodoRepository.ts": """import type { RegistroPeriodo } from "../entities/RegistroPeriodo";
 
 // CONTRATO. El dominio y los casos de uso solo conocen esta interfaz.
@@ -510,6 +700,23 @@ export interface ResumenDashboard {
     metrosEspacioAjenoInvadido: number;
   }>;
   actualizadoEn: string;
+}
+""",
+    "src/domain/services/IExportadorReportes.ts": """// Mismo patron que los repositorios: el dominio solo conoce este CONTRATO. La implementacion
+// real (que sabe de librerias de Excel/PDF especificas) vive en infrastructure/, para poder
+// cambiar de libreria sin tocar ni un caso de uso ni una pantalla.
+import type { RegistroPeriodo } from "../entities/RegistroPeriodo";
+import type { PQRS } from "../entities/PQRS";
+import type { AyudaDeMemoria } from "../entities/AyudaDeMemoria";
+
+export interface IExportadorReportes {
+  /** Genera un .xlsx con la misma estructura de columnas que Datos_BD en el Excel -- para que
+   *  el archivo que sale de la PWA se pueda abrir y comparar directo contra el original. */
+  exportarExcel(registros: RegistroPeriodo[], pqrs: PQRS[]): Promise<Blob>;
+  /** PDF de reporte para imprimir o entregar -- KPIs + tabla resumida, no la base de datos cruda. */
+  exportarPDF(registros: RegistroPeriodo[], pqrs: PQRS[]): Promise<Blob>;
+  /** Ayuda de memoria: usa exactamente el formato institucional GD-040. */
+  generarAyudaDeMemoria(datos: AyudaDeMemoria): Promise<Blob>;
 }
 """,
     "src/index.css": """@import "tailwindcss";
@@ -687,6 +894,62 @@ button {
 button:disabled {
   cursor: not-allowed;
 }""",
+    "src/infrastructure/repositories/FirebasePQRSRepository.ts": """import { collection, addDoc, updateDoc, doc, query, where, getDocs, serverTimestamp, Timestamp } from "firebase/firestore";
+import { db } from "../config/firebase";
+import type { PQRS } from "../../domain/entities/PQRS";
+import type { IPQRSRepository } from "../../domain/repositories/IPQRSRepository";
+
+const PQRS_COLECCION = "pqrs";
+
+function fromFirestore(id: string, data: any): PQRS {
+  return {
+    id,
+    unidadOperativaId: data.unidadOperativaId,
+    totalCajas: data.totalCajas,
+    tareas: data.tareas,
+    traslado: data.traslado ?? {
+      correoEnviado: false, aprobado: false, trasladado: false, cajasTrasladadas: 0,
+    },
+    encargado: data.encargado ?? "",
+    fechaVisita: data.fechaVisita ?? "",
+    observaciones: data.observaciones ?? "",
+    creadoEn: (data.creadoEn as Timestamp)?.toDate?.().toISOString() ?? "",
+    actualizadoEn: (data.actualizadoEn as Timestamp)?.toDate?.().toISOString() ?? "",
+  };
+}
+
+/** Misma correccion que en FirebaseRegistroPeriodoRepository: Firestore rechaza campos con
+ *  valor undefined -- se limpia recursivamente antes de escribir. */
+function limpiar<T extends Record<string, any>>(obj: T): T {
+  const limpio: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) continue;
+    limpio[k] = v && typeof v === "object" && !Array.isArray(v) ? limpiar(v) : v;
+  }
+  return limpio as T;
+}
+
+export class FirebasePQRSRepository implements IPQRSRepository {
+  async listarPorUnidad(unidadOperativaId: string): Promise<PQRS[]> {
+    const q = query(collection(db, PQRS_COLECCION), where("unidadOperativaId", "==", unidadOperativaId));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  }
+
+  async guardar(p: Omit<PQRS, "id" | "creadoEn" | "actualizadoEn">): Promise<PQRS> {
+    const ref = await addDoc(collection(db, PQRS_COLECCION), {
+      ...limpiar(p),
+      creadoEn: serverTimestamp(),
+      actualizadoEn: serverTimestamp(),
+    });
+    return { ...p, id: ref.id, creadoEn: new Date().toISOString(), actualizadoEn: new Date().toISOString() };
+  }
+
+  async actualizar(id: string, cambios: Partial<PQRS>): Promise<void> {
+    await updateDoc(doc(db, PQRS_COLECCION, id), { ...limpiar(cambios), actualizadoEn: serverTimestamp() });
+  }
+}
+""",
     "src/infrastructure/repositories/FirebaseRegistroPeriodoRepository.ts": """import {
   collection,
   doc,
@@ -864,9 +1127,163 @@ export class MockRegistroPeriodoRepository implements IRegistroPeriodoRepository
   }
 }
 """,
+    "src/infrastructure/services/JsPDFExportadorReportes.ts": """// Implementacion CONCRETA del contrato IExportadorReportes usando jsPDF + jspdf-autotable +
+// xlsx. Esta es la UNICA clase del proyecto que sabe que existen esas librerias especificas --
+// si mañana se cambia de libreria, solo se toca este archivo.
+//
+// Requiere instalar las dependencias primero:
+//   npm install xlsx jspdf jspdf-autotable
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import * as XLSX from "xlsx";
+import type { RegistroPeriodo } from "../../domain/entities/RegistroPeriodo";
+import { calcularAvanceTotal, cajasVigentes } from "../../domain/entities/RegistroPeriodo";
+import type { PQRS } from "../../domain/entities/PQRS";
+import { avanceOrganizacionPQRS, cajasVigentesPQRS } from "../../domain/entities/PQRS";
+import type { AyudaDeMemoria } from "../../domain/entities/AyudaDeMemoria";
+import type { IExportadorReportes } from "../../domain/services/IExportadorReportes";
+
+function formatearFecha(iso?: string): string {
+  if (!iso) return "";
+  const [a, m, d] = iso.split("-");
+  return d && m && a ? `${d}/${m}/${a}` : iso;
+}
+
+export class JsPDFExportadorReportes implements IExportadorReportes {
+  async exportarExcel(registros: RegistroPeriodo[], pqrs: PQRS[]): Promise<Blob> {
+    // Mismas columnas conceptuales que Datos_BD en el Excel original, para poder comparar
+    // directo el archivo que sale de la PWA contra el que ya conoce el equipo.
+    const filas = registros.map((r) => ({
+      "Unidad Operativa": r.unidadOperativaId,
+      "Periodo / Fase": r.periodo,
+      "Total Cajas (Meta)": r.totalCajas,
+      "FUID (Cant)": r.tareas.fuid,
+      "Eliminación (Cant)": r.tareas.eliminacion ?? "N/A",
+      "Clasificación (Cant)": r.tareas.clasificacion,
+      "Ordenación (Cant)": r.tareas.ordenacion,
+      "Foliación (Cant)": r.tareas.foliacion,
+      "Hoja de Control (Cant)": r.tareas.hojaControl,
+      "Rotulación (Cant)": r.tareas.rotulacion,
+      "% Avance Total": calcularAvanceTotal(r),
+      "Cajas Vigentes en Sitio": cajasVigentes(r),
+      "Encargado": r.encargado ?? "",
+      "Fecha Visita": formatearFecha(r.fechaVisita),
+      "Observaciones": r.observaciones ?? "",
+    }));
+    const filasPQRS = pqrs.map((p) => ({
+      "Unidad Operativa": p.unidadOperativaId,
+      "Total Cajas PQRS": p.totalCajas,
+      "% Avance Organización": avanceOrganizacionPQRS(p),
+      "Cajas Vigentes PQRS": cajasVigentesPQRS(p),
+      "Notificado Subsecretaría": p.traslado.correoEnviado ? "SI" : "NO",
+      "Trasladado": p.traslado.trasladado ? "SI" : "NO",
+    }));
+
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(filas), "Datos_BD");
+    XLSX.utils.book_append_sheet(libro, XLSX.utils.json_to_sheet(filasPQRS), "PQRS");
+    const buffer = XLSX.write(libro, { bookType: "xlsx", type: "array" });
+    return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
+  async exportarPDF(registros: RegistroPeriodo[], pqrs: PQRS[]): Promise<Blob> {
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text("Reporte de Gestión Documental — Pérgamo", 14, 18);
+    doc.setFontSize(10);
+    doc.text(`Generado: ${new Date().toLocaleDateString("es-CO")}`, 14, 25);
+
+    autoTable(doc, {
+      startY: 32,
+      head: [["Unidad Operativa", "Periodo", "Total Cajas", "% Avance", "Cajas Vigentes"]],
+      body: registros.map((r) => [
+        r.unidadOperativaId, r.periodo, r.totalCajas,
+        `${Math.round(calcularAvanceTotal(r) * 100)}%`, cajasVigentes(r),
+      ]),
+      headStyles: { fillColor: [37, 99, 235] },
+    });
+
+    if (pqrs.length > 0) {
+      const finalY = (doc as any).lastAutoTable.finalY + 10;
+      doc.setFontSize(12);
+      doc.text("PQRS", 14, finalY);
+      autoTable(doc, {
+        startY: finalY + 4,
+        head: [["Unidad Operativa", "Total Cajas", "% Avance", "Notificado", "Trasladado"]],
+        body: pqrs.map((p) => [
+          p.unidadOperativaId, p.totalCajas,
+          `${Math.round(avanceOrganizacionPQRS(p) * 100)}%`,
+          p.traslado.correoEnviado ? "Sí" : "No",
+          p.traslado.trasladado ? "Sí" : "No",
+        ]),
+        headStyles: { fillColor: [15, 118, 110] },
+      });
+    }
+    return doc.output("blob");
+  }
+
+  /** Formato institucional GD-040 exacto: Lugar / Fecha / Tema / Desarrollo / tabla de
+   *  Asistentes (con espacio en blanco para firma física) / tabla de Compromisos / Próxima
+   *  reunión / Elaboró. */
+  async generarAyudaDeMemoria(datos: AyudaDeMemoria): Promise<Blob> {
+    const doc = new jsPDF();
+    let y = 18;
+
+    doc.setFontSize(15);
+    doc.text("Ayuda de Memoria", 14, y);
+    y += 10;
+
+    doc.setFontSize(10);
+    const campo = (etiqueta: string, valor: string) => {
+      doc.setFont("helvetica", "bold");
+      doc.text(`${etiqueta}:`, 14, y);
+      doc.setFont("helvetica", "normal");
+      const lineas = doc.splitTextToSize(valor || "", 150);
+      doc.text(lineas, 45, y);
+      y += Math.max(6, lineas.length * 5);
+    };
+    campo("Lugar", datos.lugar);
+    campo("Fecha", formatearFecha(datos.fecha));
+    campo("Tema", datos.tema);
+    campo("Desarrollo", datos.desarrollo);
+    y += 4;
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Asistentes", 14, y);
+    y += 2;
+    autoTable(doc, {
+      startY: y,
+      head: [["Nombre", "Cargo/Rol", "Dependencia", "Firma"]],
+      body: datos.asistentes.map((a) => [a.nombre, a.cargoRol, a.dependencia, ""]), // firma en blanco -- se firma a mano
+      headStyles: { fillColor: [37, 99, 235] },
+      columnStyles: { 3: { minCellHeight: 14 } }, // deja espacio real para firmar a mano
+    });
+    y = (doc as any).lastAutoTable.finalY + 8;
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Compromisos", 14, y);
+    y += 2;
+    autoTable(doc, {
+      startY: y,
+      head: [["Actividad", "Responsable", "Fecha límite"]],
+      body: datos.compromisos.map((c) => [c.actividad, c.responsable, formatearFecha(c.fechaLimite)]),
+      headStyles: { fillColor: [37, 99, 235] },
+    });
+    y = (doc as any).lastAutoTable.finalY + 10;
+
+    doc.setFont("helvetica", "normal");
+    campo("Próxima reunión", datos.proximaReunion ? formatearFecha(datos.proximaReunion) : "No establecida");
+    campo("Elaboró", datos.elaboroPor);
+
+    return doc.output("blob");
+  }
+}
+""",
     "src/main.tsx": """import React, { useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { FormularioVisita } from '@presentation/screens/FormularioVisita';
+import { PQRSPage } from '@presentation/screens/PQRSPage';
+import { AyudaDeMemoriaPage } from '@presentation/screens/AyudaDeMemoriaPage';
 import { TableroPage } from '@presentation/screens/TableroPage';
 import { Navbar } from '@presentation/components/Navbar';
 import type { Vista } from '@presentation/components/Navbar';
@@ -879,14 +1296,13 @@ function App() {
   return (
     <div className="min-h-screen bg-documental-pattern text-slate-900 pb-16">
       <div className="estanteria-ilustracion" aria-hidden="true" />
-      {/* Header FIJO arriba (position: fixed, no "sticky"). La causa real de que antes no se
-          quedara fijo era "overflow-x: hidden" en .bg-documental-pattern -- eso crea un
-          contenedor de scroll propio en algunos navegadores que rompe el fixed. Ya se quito
-          (ver index.css), asi que esta vez si se queda en su sitio de verdad. */}
       <Navbar vista={vista} onCambiarVista={setVista} />
 
       <main className="mx-auto max-w-3xl px-4 pt-32 sm:pt-24">
-        {vista === "captura" ? <FormularioVisita /> : <TableroPage />}
+        {vista === "captura" && <FormularioVisita />}
+        {vista === "pqrs" && <PQRSPage />}
+        {vista === "ayuda-memoria" && <AyudaDeMemoriaPage />}
+        {vista === "tablero" && <TableroPage />}
       </main>
     </div>
   );
@@ -900,12 +1316,19 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
 """,
     "src/presentation/components/Navbar.tsx": """import { useState } from "react";
 
-export type Vista = "captura" | "tablero";
+export type Vista = "captura" | "pqrs" | "ayuda-memoria" | "tablero";
+
+interface SubItem {
+  vista: Vista;
+  label: string;
+  descripcion: string;
+  disponible: boolean;
+}
 
 interface ItemMenu {
-  id: Vista;
+  id: string;
   label: string;
-  submenus: Array<{ label: string; descripcion: string; disponible: boolean }>;
+  submenus: SubItem[];
 }
 
 const MENU: ItemMenu[] = [
@@ -913,23 +1336,28 @@ const MENU: ItemMenu[] = [
     id: "captura",
     label: "Captura",
     submenus: [
-      { label: "Nueva visita", descripcion: "Registrar avance de una unidad operativa", disponible: true },
-      { label: "Historial de visitas", descripcion: "Ver capturas anteriores por unidad", disponible: false },
+      { vista: "captura", label: "Nueva visita", descripcion: "Registrar avance de una unidad operativa", disponible: true },
+      { vista: "pqrs", label: "PQRS", descripcion: "Organización y traslado a Gestión Institucional", disponible: true },
+      { vista: "ayuda-memoria", label: "Ayuda de memoria", descripcion: "Generar PDF con el formato GD-040", disponible: true },
     ],
   },
   {
     id: "tablero",
     label: "Tablero",
     submenus: [
-      { label: "Resumen general", descripcion: "KPIs consolidados, igual que el Excel", disponible: false },
-      { label: "Por Subdirección", descripcion: "Desglose SLIS, sobreapilamiento, avance", disponible: false },
-      { label: "Por Unidad Operativa", descripcion: "Detalle unidad por unidad", disponible: false },
+      { vista: "tablero", label: "Resumen general", descripcion: "KPIs consolidados, igual que el Excel", disponible: false },
     ],
   },
 ];
 
+/** A que grupo del menu pertenece la vista activa -- para resaltar el boton padre correcto. */
+function grupoDe(vista: Vista): string {
+  return MENU.find((m) => m.submenus.some((s) => s.vista === vista))?.id ?? "captura";
+}
+
 export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista: (v: Vista) => void }) {
-  const [abierto, setAbierto] = useState<Vista | null>(null);
+  const [abierto, setAbierto] = useState<string | null>(null);
+  const grupoActivo = grupoDe(vista);
 
   return (
     <header className="fixed inset-x-0 top-0 z-50">
@@ -959,7 +1387,7 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
             </div>
           </div>
 
-          {/* Menu con submenus (desktop) */}
+          {/* Menu con submenus (desktop) -- cada submenu navega a su propia vista */}
           <nav className="hidden items-center gap-1 sm:flex">
             {MENU.map((item) => (
               <div
@@ -969,9 +1397,9 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
                 onMouseLeave={() => setAbierto(null)}
               >
                 <button
-                  onClick={() => onCambiarVista(item.id)}
+                  onClick={() => onCambiarVista(item.submenus[0].vista)}
                   className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                    vista === item.id ? "bg-primary-700 text-white" : "text-slate-700 hover:bg-primary-50"
+                    grupoActivo === item.id ? "bg-primary-700 text-white" : "text-slate-700 hover:bg-primary-50"
                   }`}
                 >
                   {item.label}
@@ -981,11 +1409,11 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
                     <div className="glass-card overflow-hidden rounded-xl p-1.5 shadow-lg">
                       {item.submenus.map((sub) => (
                         <div
-                          key={sub.label}
+                          key={sub.vista}
                           className={`rounded-lg px-3 py-2 text-sm ${
                             sub.disponible ? "cursor-pointer hover:bg-primary-50" : "cursor-default opacity-50"
-                          }`}
-                          onClick={() => sub.disponible && onCambiarVista(item.id)}
+                          } ${vista === sub.vista ? "bg-primary-50" : ""}`}
+                          onClick={() => sub.disponible && onCambiarVista(sub.vista)}
                         >
                           <div className="flex items-center justify-between font-semibold text-slate-800">
                             {sub.label}
@@ -1011,17 +1439,17 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
           </span>
         </div>
 
-        {/* Menu movil: simple, sin submenus desplegables (mas facil de tocar en celular) */}
-        <div className="flex gap-1 border-t border-white/40 px-4 py-2 sm:hidden">
-          {MENU.map((item) => (
+        {/* Menu movil: acordeon simple, ya que ahora hay submenus reales de verdad */}
+        <div className="flex flex-wrap gap-1 border-t border-white/40 px-4 py-2 sm:hidden">
+          {MENU.flatMap((item) => item.submenus.filter((s) => s.disponible)).map((sub) => (
             <button
-              key={item.id}
-              onClick={() => onCambiarVista(item.id)}
-              className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
-                vista === item.id ? "bg-primary-700 text-white" : "text-slate-700"
+              key={sub.vista}
+              onClick={() => onCambiarVista(sub.vista)}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                vista === sub.vista ? "bg-primary-700 text-white" : "bg-white/60 text-slate-700"
               }`}
             >
-              {item.label}
+              {sub.label}
             </button>
           ))}
         </div>
@@ -1174,6 +1602,74 @@ export function Sidebar({ vista, onCambiarVista }: { vista: Vista; onCambiarVist
   );
 }
 """,
+    "src/presentation/hooks/useAyudaDeMemoria.ts": """import { useMemo, useState } from "react";
+import type { AyudaDeMemoria } from "../../domain/entities/AyudaDeMemoria";
+import { validarAyudaDeMemoria } from "../../domain/entities/AyudaDeMemoria";
+import { JsPDFExportadorReportes } from "../../infrastructure/services/JsPDFExportadorReportes";
+
+export const useAyudaDeMemoria = () => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const exportador = useMemo(() => new JsPDFExportadorReportes(), []);
+
+  const generarPDF = async (datos: Omit<AyudaDeMemoria, "id" | "creadoEn">) => {
+    setError(null);
+    const errores = validarAyudaDeMemoria(datos);
+    if (errores.length > 0) {
+      setError(errores.join(" "));
+      throw new Error(errores.join(" "));
+    }
+    setLoading(true);
+    try {
+      const completa: AyudaDeMemoria = { ...datos, id: "", creadoEn: new Date().toISOString() };
+      const blob = await exportador.generarAyudaDeMemoria(completa);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ayuda-de-memoria-${datos.fecha || "sin-fecha"}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return { generarPDF, loading, error };
+};
+""",
+    "src/presentation/hooks/usePQRS.ts": """import { useState, useMemo } from "react";
+import type { PQRS } from "../../domain/entities/PQRS";
+import { RegistrarPQRS, type RegistrarPQRSInput } from "../../application/useCases/RegistrarPQRS";
+import { FirebasePQRSRepository } from "../../infrastructure/repositories/FirebasePQRSRepository";
+
+export const usePQRS = () => {
+  const [items, setItems] = useState<PQRS[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const registrarPQRS = useMemo(() => {
+    const repository = new FirebasePQRSRepository();
+    return new RegistrarPQRS(repository);
+  }, []);
+
+  const registrar = async (input: RegistrarPQRSInput) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const nuevo = await registrarPQRS.ejecutar(input);
+      setItems((prev) => [nuevo, ...prev]);
+      return nuevo;
+    } catch (err: any) {
+      setError(err.message || "Error al conectar con la base de datos");
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return { items, loading, error, registrar };
+};
+""",
     "src/presentation/hooks/useRegistroPeriodo.ts": """import { useState, useMemo } from "react";
 import type { RegistroPeriodo } from "../../domain/entities/RegistroPeriodo";
 import { RegistrarAvancePeriodo, type RegistrarAvanceInput } from "../../application/useCases/RegistrarAvancePeriodo";
@@ -1206,6 +1702,190 @@ export const useRegistroPeriodo = () => {
 
   return { registros, loading, error, registrar };
 };
+""",
+    "src/presentation/screens/AyudaDeMemoriaPage.tsx": """import { useState } from "react";
+import { useAyudaDeMemoria } from "../hooks/useAyudaDeMemoria";
+import type { AsistenteActa, CompromisoActa } from "../../domain/entities/AyudaDeMemoria";
+
+const campoBase =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 " +
+  "shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20";
+const etiqueta = "block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5";
+
+function Tarjeta({ children }: { children: React.ReactNode }) {
+  return <section className="glass-card glass-card-interactiva rounded-2xl p-5 sm:p-6">{children}</section>;
+}
+
+const ASISTENTE_VACIO: AsistenteActa = { nombre: "", cargoRol: "", dependencia: "" };
+const COMPROMISO_VACIO: CompromisoActa = { actividad: "", responsable: "", fechaLimite: "" };
+
+/** Formato institucional GD-040: Lugar / Fecha / Tema / Desarrollo / Asistentes (filas
+ *  dinamicas, "Inserte tantas filas como requiera" dice la plantilla) / Compromisos (mismo
+ *  patron) / Proxima reunion / Elaboro. */
+export function AyudaDeMemoriaPage() {
+  const { generarPDF, loading, error } = useAyudaDeMemoria();
+  const [lugar, setLugar] = useState("");
+  const [fecha, setFecha] = useState("");
+  const [tema, setTema] = useState("");
+  const [desarrollo, setDesarrollo] = useState("");
+  const [asistentes, setAsistentes] = useState<AsistenteActa[]>([{ ...ASISTENTE_VACIO }]);
+  const [compromisos, setCompromisos] = useState<CompromisoActa[]>([{ ...COMPROMISO_VACIO }]);
+  const [proximaReunion, setProximaReunion] = useState("");
+  const [elaboroPor, setElaboroPor] = useState("");
+  const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  function actualizarAsistente(i: number, campo: keyof AsistenteActa, valor: string) {
+    setAsistentes(asistentes.map((a, idx) => (idx === i ? { ...a, [campo]: valor } : a)));
+  }
+  function actualizarCompromiso(i: number, campo: keyof CompromisoActa, valor: string) {
+    setCompromisos(compromisos.map((c, idx) => (idx === i ? { ...c, [campo]: valor } : c)));
+  }
+
+  async function generar() {
+    setMensaje(null);
+    try {
+      await generarPDF({
+        lugar, fecha, tema, desarrollo,
+        asistentes: asistentes.filter((a) => a.nombre.trim() !== ""),
+        compromisos: compromisos.filter((c) => c.actividad.trim() !== ""),
+        proximaReunion: proximaReunion || undefined,
+        elaboroPor,
+      });
+      setMensaje({ tipo: "ok", texto: "PDF generado y descargado con el formato institucional GD-040." });
+    } catch (e) {
+      setMensaje({ tipo: "error", texto: e instanceof Error ? e.message : "No se pudo generar el PDF." });
+    }
+  }
+
+  return (
+    <div className="space-y-5 pb-10">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-widest text-primary-600">Ayuda de memoria</p>
+        <h1 className="mt-1 text-2xl font-bold text-slate-900">Formato GD-040</h1>
+        <p className="mt-1 text-sm text-slate-500">Genera el PDF con el mismo formato institucional que ya usa el equipo.</p>
+      </div>
+
+      <Tarjeta>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className={etiqueta}>Lugar</span>
+            <input className={campoBase} value={lugar} onChange={(e) => setLugar(e.target.value)}
+                   placeholder="Dependencia o entidad donde se realizó la reunión" />
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Fecha</span>
+            <input type="date" className={campoBase} value={fecha} onChange={(e) => setFecha(e.target.value)} />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className={etiqueta}>Tema</span>
+            <input className={campoBase} value={tema} onChange={(e) => setTema(e.target.value)}
+                   placeholder="Objetivo de la reunión" />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className={etiqueta}>Desarrollo</span>
+            <textarea className={campoBase} rows={4} value={desarrollo} onChange={(e) => setDesarrollo(e.target.value)}
+                       placeholder="Puntos específicos tratados u orden del día" />
+          </label>
+        </div>
+      </Tarjeta>
+
+      <Tarjeta>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-700">Asistentes</p>
+          <button onClick={() => setAsistentes([...asistentes, { ...ASISTENTE_VACIO }])}
+                  className="text-xs font-semibold text-primary-600 hover:text-primary-700">
+            + Agregar asistente
+          </button>
+        </div>
+        <div className="space-y-3">
+          {asistentes.map((a, i) => (
+            <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2 border-b border-slate-100 pb-3">
+              <label className="block">
+                <span className="text-[10px] text-slate-400">Nombre</span>
+                <input className={campoBase} value={a.nombre} onChange={(e) => actualizarAsistente(i, "nombre", e.target.value)} />
+              </label>
+              <label className="block">
+                <span className="text-[10px] text-slate-400">Cargo/Rol</span>
+                <input className={campoBase} value={a.cargoRol} onChange={(e) => actualizarAsistente(i, "cargoRol", e.target.value)} />
+              </label>
+              <label className="block">
+                <span className="text-[10px] text-slate-400">Dependencia</span>
+                <input className={campoBase} value={a.dependencia} onChange={(e) => actualizarAsistente(i, "dependencia", e.target.value)}
+                       placeholder="No aplica si es usuario/beneficiario" />
+              </label>
+              <button onClick={() => setAsistentes(asistentes.filter((_, idx) => idx !== i))}
+                      disabled={asistentes.length === 1}
+                      className="h-9 rounded-lg px-2 text-xs text-red-500 hover:bg-red-50 disabled:opacity-30">
+                Quitar
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-slate-400">La firma queda en blanco en el PDF — se firma físicamente en papel.</p>
+      </Tarjeta>
+
+      <Tarjeta>
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-700">Compromisos</p>
+          <button onClick={() => setCompromisos([...compromisos, { ...COMPROMISO_VACIO }])}
+                  className="text-xs font-semibold text-primary-600 hover:text-primary-700">
+            + Agregar compromiso
+          </button>
+        </div>
+        <div className="space-y-3">
+          {compromisos.map((c, i) => (
+            <div key={i} className="grid grid-cols-[1.5fr_1fr_1fr_auto] items-end gap-2 border-b border-slate-100 pb-3">
+              <label className="block">
+                <span className="text-[10px] text-slate-400">Actividad</span>
+                <input className={campoBase} value={c.actividad} onChange={(e) => actualizarCompromiso(i, "actividad", e.target.value)} />
+              </label>
+              <label className="block">
+                <span className="text-[10px] text-slate-400">Responsable</span>
+                <input className={campoBase} value={c.responsable} onChange={(e) => actualizarCompromiso(i, "responsable", e.target.value)} />
+              </label>
+              <label className="block">
+                <span className="text-[10px] text-slate-400">Fecha límite</span>
+                <input type="date" className={campoBase} value={c.fechaLimite} onChange={(e) => actualizarCompromiso(i, "fechaLimite", e.target.value)} />
+              </label>
+              <button onClick={() => setCompromisos(compromisos.filter((_, idx) => idx !== i))}
+                      disabled={compromisos.length === 1}
+                      className="h-9 rounded-lg px-2 text-xs text-red-500 hover:bg-red-50 disabled:opacity-30">
+                Quitar
+              </button>
+            </div>
+          ))}
+        </div>
+      </Tarjeta>
+
+      <Tarjeta>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className={etiqueta}>Próxima reunión</span>
+            <input type="date" className={campoBase} value={proximaReunion} onChange={(e) => setProximaReunion(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Elaboró</span>
+            <input className={campoBase} value={elaboroPor} onChange={(e) => setElaboroPor(e.target.value)} />
+          </label>
+        </div>
+      </Tarjeta>
+
+      {(mensaje || error) && (
+        <div className={`rounded-lg border px-4 py-3 text-sm ${
+          mensaje?.tipo === "ok" ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"
+        }`}>
+          {mensaje?.texto ?? error}
+        </div>
+      )}
+
+      <button onClick={generar} disabled={loading}
+        className="w-full sm:w-auto rounded-xl bg-primary-700 px-6 py-3 text-sm font-semibold text-white shadow-md
+                   transition hover:bg-primary-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+        {loading ? "Generando…" : "Generar PDF"}
+      </button>
+    </div>
+  );
+}
 """,
     "src/presentation/screens/FormularioVisita.tsx": """import { useMemo, useState } from "react";
 import { useRegistroPeriodo } from "../hooks/useRegistroPeriodo";
@@ -1518,6 +2198,234 @@ export function FormularioVisita() {
   );
 }
 """,
+    "src/presentation/screens/PQRSPage.tsx": """import { useMemo, useState } from "react";
+import { usePQRS } from "../hooks/usePQRS";
+import {
+  calcularAvancePorTarea,
+  calcularAvanceTotal,
+  semaforo,
+} from "../../domain/entities/RegistroPeriodo";
+import type { TareasCantidad, Semaforo } from "../../domain/entities/RegistroPeriodo";
+import type { TrasladoPQRS } from "../../domain/entities/PQRS";
+import { puedeIniciarTraslado } from "../../domain/entities/PQRS";
+
+const TAREAS: Array<{ key: keyof TareasCantidad; label: string; opcional?: boolean }> = [
+  { key: "fuid", label: "FUID" },
+  { key: "eliminacion", label: "Eliminación", opcional: true },
+  { key: "clasificacion", label: "Clasificación" },
+  { key: "ordenacion", label: "Ordenación" },
+  { key: "foliacion", label: "Foliación" },
+  { key: "hojaControl", label: "Hoja de Control" },
+  { key: "rotulacion", label: "Rotulación" },
+];
+
+const VACIAS: TareasCantidad = {
+  fuid: 0, eliminacion: null, clasificacion: 0, ordenacion: 0,
+  foliacion: 0, hojaControl: 0, rotulacion: 0,
+};
+const TRASLADO_VACIO: TrasladoPQRS = {
+  correoEnviado: false, aprobado: false, trasladado: false, cajasTrasladadas: 0,
+};
+
+const COLOR_SEMAFORO: Record<Semaforo, string> = {
+  verde: "#16A34A", ambar: "#F59E0B", rojo: "#DC2626",
+};
+
+const campoBase =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 " +
+  "shadow-sm transition focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20";
+const etiqueta = "block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5";
+
+function Tarjeta({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <section className={`glass-card glass-card-interactiva rounded-2xl p-5 sm:p-6 ${className}`}>{children}</section>;
+}
+
+export function PQRSPage() {
+  const { registrar, loading } = usePQRS();
+  const [unidadOperativaId, setUnidad] = useState("");
+  const [totalCajas, setTotalCajas] = useState<number>(0);
+  const [tareas, setTareas] = useState<TareasCantidad>(VACIAS);
+  const [traslado, setTraslado] = useState<TrasladoPQRS>(TRASLADO_VACIO);
+  const [encargado, setEncargado] = useState("");
+  const [fechaVisita, setFechaVisita] = useState("");
+  const [observaciones, setObservaciones] = useState("");
+  const [mensaje, setMensaje] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+
+  const avanceTotal = useMemo(() => calcularAvanceTotal({ totalCajas, tareas }), [totalCajas, tareas]);
+  const estado = semaforo(avanceTotal);
+  const listoParaTraslado = puedeIniciarTraslado({ totalCajas, tareas });
+
+  const excedidas = TAREAS.filter(
+    ({ key }) => totalCajas > 0 && typeof tareas[key] === "number" && (tareas[key] as number) > totalCajas
+  );
+
+  async function guardar() {
+    setMensaje(null);
+    try {
+      await registrar({
+        unidadOperativaId, totalCajas, tareas, traslado,
+        encargado: encargado || undefined,
+        fechaVisita: fechaVisita || undefined,
+        observaciones: observaciones || undefined,
+      });
+      setMensaje({ tipo: "ok", texto: "PQRS registrado. El tablero ya refleja el cambio." });
+      setTareas(VACIAS); setTotalCajas(0); setTraslado(TRASLADO_VACIO);
+      setObservaciones(""); setFechaVisita("");
+    } catch (e) {
+      setMensaje({ tipo: "error", texto: e instanceof Error ? e.message : "No se pudo guardar." });
+    }
+  }
+
+  const puedeGuardar = unidadOperativaId.trim() !== "" && totalCajas > 0 && excedidas.length === 0 && !loading;
+
+  return (
+    <div className="space-y-5 pb-10">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-widest text-primary-600">Registro de PQRS</p>
+        <h1 className="mt-1 text-2xl font-bold text-slate-900">Organización y traslado de PQRS</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Mismo flujo de organización que el TRD normal — se cuenta en cajas. El destino final es
+          la Subsecretaría de Gestión Institucional, no el Archivo Central.
+        </p>
+      </div>
+
+      <Tarjeta>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block sm:col-span-2">
+            <span className={etiqueta}>Unidad operativa</span>
+            <input className={campoBase} value={unidadOperativaId} onChange={(e) => setUnidad(e.target.value)}
+                   placeholder="Ej. CDC Lago Timiza" />
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Total cajas PQRS</span>
+            <input type="number" min={0} className={`${campoBase} font-mono text-base`}
+                   value={totalCajas || ""} onChange={(e) => setTotalCajas(Number(e.target.value) || 0)} />
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Fecha de la visita</span>
+            <input type="date" className={campoBase} value={fechaVisita} onChange={(e) => setFechaVisita(e.target.value)} />
+          </label>
+        </div>
+      </Tarjeta>
+
+      <Tarjeta>
+        <p className="mb-3 text-sm font-semibold text-slate-700">Cajas organizadas por tarea</p>
+        <div className="space-y-3">
+          {TAREAS.map(({ key, label, opcional }) => {
+            const valor = tareas[key];
+            const esNA = opcional && (valor === null || valor === undefined);
+            const pct = calcularAvancePorTarea(valor, totalCajas);
+            const excede = totalCajas > 0 && typeof valor === "number" && valor > totalCajas;
+            return (
+              <div key={key} className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-700">{label}</span>
+                    {opcional && (
+                      <label className="flex items-center gap-1.5 text-xs text-slate-400">
+                        <input type="checkbox" checked={!!esNA}
+                               onChange={(e) => setTareas({ ...tareas, [key]: e.target.checked ? null : 0 })} />
+                        N/A
+                      </label>
+                    )}
+                  </div>
+                  <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div className={`h-full rounded-full transition-all ${excede ? "bg-red-500" : "bg-primary-500"}`}
+                         style={{ width: `${Math.min(pct ?? 0, 1) * 100}%` }} />
+                  </div>
+                </div>
+                <input type="number" min={0} disabled={!!esNA} aria-label={`Cajas de ${label}`}
+                  className={`w-20 rounded-lg border px-2 py-1.5 text-right text-sm font-mono shadow-sm
+                    focus:outline-none focus:ring-2 focus:ring-primary-500/20 disabled:bg-slate-50 disabled:text-slate-300
+                    ${excede ? "border-red-400 ring-1 ring-red-400" : "border-slate-300 focus:border-primary-500"}`}
+                  value={esNA ? "" : (valor ?? 0) || ""}
+                  onChange={(e) => setTareas({ ...tareas, [key]: Number(e.target.value) || 0 })} />
+                <span className="w-11 shrink-0 text-right text-sm font-mono text-slate-500">
+                  {pct === null ? "N/A" : `${Math.round(pct * 100)}%`}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {excedidas.length > 0 && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+            <p className="text-sm text-red-700">
+              {excedidas.map((t) => t.label).join(", ")} supera{excedidas.length > 1 ? "n" : ""} el total de cajas.
+            </p>
+          </div>
+        )}
+      </Tarjeta>
+
+      <Tarjeta className="flex items-center gap-4">
+        <div className="h-3 w-3 shrink-0 rounded-full" style={{ background: COLOR_SEMAFORO[estado] }} />
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Avance de organización</p>
+          <p className="font-mono text-3xl font-bold" style={{ color: COLOR_SEMAFORO[estado] }}>
+            {Math.round(avanceTotal * 100)}%
+          </p>
+        </div>
+      </Tarjeta>
+
+      <Tarjeta>
+        <p className="text-sm font-semibold text-slate-700">Traslado a Subsecretaría de Gestión Institucional</p>
+        <p className="mt-1 text-xs text-slate-400">
+          {listoParaTraslado
+            ? "La organización está completa — ya se puede notificar y trasladar."
+            : "Solo se habilita cuando el avance de organización llega al 90% o más."}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+          {([
+            ["correoEnviado", "Correo enviado"],
+            ["aprobado", "Aprobado"],
+            ["trasladado", "Trasladado"],
+          ] as const).map(([key, label]) => (
+            <label key={key} className={`flex items-center gap-2 text-sm ${listoParaTraslado ? "text-slate-700" : "text-slate-300"}`}>
+              <input type="checkbox" checked={traslado[key]} disabled={!listoParaTraslado}
+                     onChange={(e) => setTraslado({ ...traslado, [key]: e.target.checked })} />
+              {label}
+            </label>
+          ))}
+        </div>
+        {traslado.trasladado && (
+          <label className="mt-3 block max-w-[220px]">
+            <span className={etiqueta}>Cajas trasladadas</span>
+            <input type="number" min={0} max={totalCajas} className={campoBase}
+                   value={traslado.cajasTrasladadas || ""}
+                   onChange={(e) => setTraslado({ ...traslado, cajasTrasladadas: Number(e.target.value) || 0 })} />
+          </label>
+        )}
+      </Tarjeta>
+
+      <Tarjeta>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className={etiqueta}>Encargado</span>
+            <input className={campoBase} value={encargado} onChange={(e) => setEncargado(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className={etiqueta}>Observaciones</span>
+            <textarea className={campoBase} rows={2} value={observaciones} onChange={(e) => setObservaciones(e.target.value)} />
+          </label>
+        </div>
+      </Tarjeta>
+
+      {mensaje && (
+        <div className={`rounded-lg border px-4 py-3 text-sm ${
+          mensaje.tipo === "ok" ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"
+        }`}>
+          {mensaje.texto}
+        </div>
+      )}
+
+      <button onClick={guardar} disabled={!puedeGuardar}
+        className="w-full sm:w-auto rounded-xl bg-primary-700 px-6 py-3 text-sm font-semibold text-white shadow-md
+                   transition hover:bg-primary-800 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none">
+        {loading ? "Guardando…" : "Registrar PQRS"}
+      </button>
+    </div>
+  );
+}
+""",
     "src/presentation/screens/TableroPage.tsx": """// Placeholder honesto de la Fase 3 (Dashboard). Estructuralmente ya vive donde debe -- dentro
 // del menu "Tablero" -- para que cuando se conecte a Firestore (leyendo el documento agregado
 // ResumenDashboard), solo haga falta reemplazar el contenido de este componente, no rearmar
@@ -1596,21 +2504,13 @@ export default defineConfig({
 
 def main():
     if not os.path.exists("package.json"):
-        print("AVISO: no encuentro package.json en esta carpeta.")
-        print("Corre este script desde la RAIZ de tu proyecto Pergamo (donde esta package.json).")
+        print("AVISO: corre esto desde la raiz de tu proyecto (donde esta package.json).")
         return
-
     for ruta, contenido in ARCHIVOS_TEXTO.items():
         os.makedirs(os.path.dirname(ruta) or ".", exist_ok=True)
-        with open(ruta, "w", encoding="utf-8", newline="\n") as f:
-            f.write(contenido)
+        with open(ruta, "w", encoding="utf-8", newline="\n") as f: f.write(contenido)
         print(f"OK  {ruta}  ({len(contenido)} caracteres)")
-
-    print()
-    print(f"Listo -- {len(ARCHIVOS_TEXTO)} archivos escritos.")
-    print("Ahora:")
-    print("  1) Deten el servidor (Ctrl+C) y vuelve a correr: npm run dev")
-    print("  2) Recarga el navegador con Ctrl+Shift+R")
-
-if __name__ == "__main__":
-    main()
+    print(f"\nListo -- {len(ARCHIVOS_TEXTO)} archivos.")
+    print("Corre: npm install   (por si faltan xlsx/jspdf/jspdf-autotable)")
+    print("Despues: reinicia npm run dev y Ctrl+Shift+R")
+if __name__ == "__main__": main()

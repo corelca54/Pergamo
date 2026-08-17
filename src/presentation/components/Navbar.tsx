@@ -1,11 +1,18 @@
 import { useState } from "react";
 
-export type Vista = "captura" | "tablero";
+export type Vista = "captura" | "pqrs" | "ayuda-memoria" | "tablero";
+
+interface SubItem {
+  vista: Vista;
+  label: string;
+  descripcion: string;
+  disponible: boolean;
+}
 
 interface ItemMenu {
-  id: Vista;
+  id: string;
   label: string;
-  submenus: Array<{ label: string; descripcion: string; disponible: boolean }>;
+  submenus: SubItem[];
 }
 
 const MENU: ItemMenu[] = [
@@ -13,23 +20,28 @@ const MENU: ItemMenu[] = [
     id: "captura",
     label: "Captura",
     submenus: [
-      { label: "Nueva visita", descripcion: "Registrar avance de una unidad operativa", disponible: true },
-      { label: "Historial de visitas", descripcion: "Ver capturas anteriores por unidad", disponible: false },
+      { vista: "captura", label: "Nueva visita", descripcion: "Registrar avance de una unidad operativa", disponible: true },
+      { vista: "pqrs", label: "PQRS", descripcion: "Organización y traslado a Gestión Institucional", disponible: true },
+      { vista: "ayuda-memoria", label: "Ayuda de memoria", descripcion: "Generar PDF con el formato GD-040", disponible: true },
     ],
   },
   {
     id: "tablero",
     label: "Tablero",
     submenus: [
-      { label: "Resumen general", descripcion: "KPIs consolidados, igual que el Excel", disponible: false },
-      { label: "Por Subdirección", descripcion: "Desglose SLIS, sobreapilamiento, avance", disponible: false },
-      { label: "Por Unidad Operativa", descripcion: "Detalle unidad por unidad", disponible: false },
+      { vista: "tablero", label: "Resumen general", descripcion: "KPIs consolidados, igual que el Excel", disponible: false },
     ],
   },
 ];
 
+/** A que grupo del menu pertenece la vista activa -- para resaltar el boton padre correcto. */
+function grupoDe(vista: Vista): string {
+  return MENU.find((m) => m.submenus.some((s) => s.vista === vista))?.id ?? "captura";
+}
+
 export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista: (v: Vista) => void }) {
-  const [abierto, setAbierto] = useState<Vista | null>(null);
+  const [abierto, setAbierto] = useState<string | null>(null);
+  const grupoActivo = grupoDe(vista);
 
   return (
     <header className="fixed inset-x-0 top-0 z-50">
@@ -59,7 +71,7 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
             </div>
           </div>
 
-          {/* Menu con submenus (desktop) */}
+          {/* Menu con submenus (desktop) -- cada submenu navega a su propia vista */}
           <nav className="hidden items-center gap-1 sm:flex">
             {MENU.map((item) => (
               <div
@@ -69,9 +81,9 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
                 onMouseLeave={() => setAbierto(null)}
               >
                 <button
-                  onClick={() => onCambiarVista(item.id)}
+                  onClick={() => onCambiarVista(item.submenus[0].vista)}
                   className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                    vista === item.id ? "bg-primary-700 text-white" : "text-slate-700 hover:bg-primary-50"
+                    grupoActivo === item.id ? "bg-primary-700 text-white" : "text-slate-700 hover:bg-primary-50"
                   }`}
                 >
                   {item.label}
@@ -81,11 +93,11 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
                     <div className="glass-card overflow-hidden rounded-xl p-1.5 shadow-lg">
                       {item.submenus.map((sub) => (
                         <div
-                          key={sub.label}
+                          key={sub.vista}
                           className={`rounded-lg px-3 py-2 text-sm ${
                             sub.disponible ? "cursor-pointer hover:bg-primary-50" : "cursor-default opacity-50"
-                          }`}
-                          onClick={() => sub.disponible && onCambiarVista(item.id)}
+                          } ${vista === sub.vista ? "bg-primary-50" : ""}`}
+                          onClick={() => sub.disponible && onCambiarVista(sub.vista)}
                         >
                           <div className="flex items-center justify-between font-semibold text-slate-800">
                             {sub.label}
@@ -111,17 +123,17 @@ export function Navbar({ vista, onCambiarVista }: { vista: Vista; onCambiarVista
           </span>
         </div>
 
-        {/* Menu movil: simple, sin submenus desplegables (mas facil de tocar en celular) */}
-        <div className="flex gap-1 border-t border-white/40 px-4 py-2 sm:hidden">
-          {MENU.map((item) => (
+        {/* Menu movil: acordeon simple, ya que ahora hay submenus reales de verdad */}
+        <div className="flex flex-wrap gap-1 border-t border-white/40 px-4 py-2 sm:hidden">
+          {MENU.flatMap((item) => item.submenus.filter((s) => s.disponible)).map((sub) => (
             <button
-              key={item.id}
-              onClick={() => onCambiarVista(item.id)}
-              className={`flex-1 rounded-lg py-2 text-sm font-semibold transition ${
-                vista === item.id ? "bg-primary-700 text-white" : "text-slate-700"
+              key={sub.vista}
+              onClick={() => onCambiarVista(sub.vista)}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                vista === sub.vista ? "bg-primary-700 text-white" : "bg-white/60 text-slate-700"
               }`}
             >
-              {item.label}
+              {sub.label}
             </button>
           ))}
         </div>
